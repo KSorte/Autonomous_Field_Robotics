@@ -32,6 +32,7 @@ class GTSAMOptimizer:
             # Add the pose to the initial estimate
             self.initial_estimate.insert(i, initial_pose)
 
+    # TODO(KSorte): Call build and optimize graph in a single function.
     def build_graph(self):
         self.graph = gtsam.NonlinearFactorGraph()
 
@@ -49,28 +50,18 @@ class GTSAMOptimizer:
             # Reprojection error
             error = self.img_mos.complete_graph[link][2]
 
-            numMatches = len(self.img_mos.complete_graph[link][1])
-            if numMatches > 200:
-                err = [0.2, 0.2, 0.1] # Minimum Error
-            elif numMatches > 100 and numMatches <= 200:
-                err = [0.5, 0.5, 0.2]
-            elif numMatches > 50 and numMatches <= 100:
-                err = [0.8, 0.8, 0.4]
-            else:
-                err = [1.0, 1.0, 0.5] # Maximum Error
             # Noise model based off the reprojection error.
-            err = [error*2, error*2, error*2*3.141592653589793238/180]
-            # err = [10.0, 10.0, 10*3.14/180]
-            # if abs(i - j) > 1:
-            #     # Smaller covariance for non temporal
-            #     err = [2.0, 2.0, 2*3.14/180]
+            # TODO (KSorte): Turn 3.141 to np.pi.
+            err = [error, error, error*np.pi/180]
+            if abs(i - j) > 1:
+                # Smaller covariance for non temporal
+                err = [error/2, error/2, error*0.5*np.pi/180]
 
             noise_model = gtsam.noiseModel.Diagonal.Sigmas(np.array(err))
 
-            i, j = link
-
             H = self.img_mos.complete_graph[link][0]
-            # T_2D, yaw = self.get_2D_pose_from_homography(H)
+
+            # Get 2d pose update from homography.
             T_2D, yaw = im.ImageMosiacking.get_2D_pose_from_homography(H)
 
             # Create the relative pose (Pose2 object) from translation and yaw
@@ -142,7 +133,6 @@ class GTSAMOptimizer:
         Plots the temporal trajectory of image centers and the optimized poses with orientations
         on the same graph.
         """
-
         # Create a figure for the combined plot
         plt.figure()
 
@@ -165,12 +155,15 @@ class GTSAMOptimizer:
             x_vals.append(pose.x())
             y_vals.append(pose.y())
             yaw_vals.append(pose.theta())
-        plt.plot(x_vals, y_vals, 'go-', label='Optimized Trajectory')  # Use a different color for the optimized trajectory
+
+        # Use a different color for the optimized trajectory
+        plt.plot(x_vals, y_vals, 'go-', label='Optimized Trajectory')
 
         # Plot the orientations (yaw) as arrows
         for idx, (x, y, yaw) in enumerate(zip(x_vals, y_vals, yaw_vals)):
             # Arrow to represent orientation (yaw)
-            dx = np.cos(yaw) * 0.5  # Scale for visualization
+            # Scale for visualization
+            dx = np.cos(yaw) * 0.5
             dy = np.sin(yaw) * 0.5
             plt.arrow(x, y, dx, dy, head_width=2, head_length=3, fc='red', ec='red')  # Arrows to indicate yaw
 

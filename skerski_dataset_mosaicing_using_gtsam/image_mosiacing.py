@@ -5,10 +5,6 @@ import math
 import os
 import re
 
-# Covariances
-
-# Check yaw calculation from H and whether it matches with the arctan2 pt to pt approach
-# Covariances
 class ImageMosiacking:
     """
     A class to perform perform image mosiacking operations on the Skerski dataset using GTSAM.
@@ -17,8 +13,9 @@ class ImageMosiacking:
     def __init__(self, image_directories,
                  display_feature_matching = False,
                  mosaic_name = "mosiac",
+                 link_proposal_distance_factor = 1.5,
                  max_reprojection_error = 2.0,
-                 max_inliers = 25):
+                 min_inliers = 25):
         """
         Initializes the ImageMosiacking class with placeholder values.
         """
@@ -27,6 +24,8 @@ class ImageMosiacking:
         # Image directory
         self.image_directories = image_directories
 
+        # TODO(KSorte): Either make sift parameters as constructor arguments or write a
+        # set sift params function that sets it. Do not edit source code to tune SIFT.
         self.sift = cv2.SIFT.create(nOctaveLayers = 5,
                                     contrastThreshold=0.02,
                                     edgeThreshold = 8.5,
@@ -41,9 +40,13 @@ class ImageMosiacking:
         self.complete_graph = {}
 
         # Maximum reprojection error for non temporal overlaps.
-        # TODO (KSorte): Make parameter to the constructor.
         self.MAX_REPROJECTION_ERROR = max_reprojection_error
-        self.MAX_INLIERS = max_inliers
+
+        # Min Inliers for link validation.
+        self.MIN_INLIERS = min_inliers
+
+        # Distance factor for proposing new links.
+        self.LINK_PROPOSAL_DISTANCE_FACTOR = link_proposal_distance_factor
 
     def get_images_for_mosaicking(self):
         """
@@ -93,23 +96,27 @@ class ImageMosiacking:
             cols = 3  # You can adjust the number of columns based on preference
             rows = math.ceil(num_images / cols)
 
-            # Create a grid of subplots
-            fig, axes = plt.subplots(rows, cols, figsize=(15, 5 * rows))  # Adjust the figure size based on the number of rows
+            # TODO (KSorte): Make image plotting a parameter.
+            # TODO (KSorte): Plot in a smaller grid.
+            # # Create a grid of subplots
+            # # Adjust the figure size based on the number of rows
+            # fig, axes = plt.subplots(rows, cols, figsize=(15, 5 * rows))
 
-            # Flatten the axes array to easily iterate over it
-            axes = axes.flatten()
+            # # Flatten the axes array to easily iterate over it
+            # axes = axes.flatten()
 
-            # Loop through images and plot them in the grid
-            for i, image in enumerate(self.images):
-                axes[i].imshow(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))  # Convert BGR to RGB for Matplotlib
-                axes[i].axis('off')  # Turn off the axis
+            # # Loop through images and plot them in the grid
+            # for i, image in enumerate(self.images):
+            #     # Convert BGR to RGB for Matplotlib
+            #     axes[i].imshow(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
+            #     axes[i].axis('off')  # Turn off the axis
 
-            # Turn off unused axes (if any)
-            for j in range(i + 1, len(axes)):
-                axes[j].axis('off')
+            # # Turn off unused axes (if any)
+            # for j in range(i + 1, len(axes)):
+            #     axes[j].axis('off')
 
-            plt.tight_layout()  # Adjust layout to avoid overlap
-            plt.show()
+            # plt.tight_layout()  # Adjust layout to avoid overlap
+            # plt.show()
 
     def get_features(self):
         """
@@ -140,7 +147,10 @@ class ImageMosiacking:
             self.descriptors.append(descriptors)
 
             # Draw and plot the keypoints
-            image_with_keypoints = cv2.drawKeypoints(gray_image, keypoints, None, flags=cv2.DRAW_MATCHES_FLAGS_DRAW_RICH_KEYPOINTS)
+            image_with_keypoints = cv2.drawKeypoints(
+                gray_image, keypoints, None,
+                flags=cv2.DRAW_MATCHES_FLAGS_DRAW_RICH_KEYPOINTS)
+
             if self.display_feature_matching:
                 plt.figure(figsize=(10, 6))
                 plt.imshow(image_with_keypoints, cmap='gray')
@@ -259,8 +269,9 @@ class ImageMosiacking:
         # src_pts[:, 0, 1] = np.divide(src_pts[:, 0, 1], width / 2) - 1
 
         # Compute homography using RANSAC.
-        # H, mask = cv2.findHomography(src_pts, dest_pts, cv2.RANSAC, 0.02) # For normalized images.
-        H, mask = cv2.findHomography(src_pts, dest_pts, cv2.RANSAC, 5.0)
+        affine_matrix, mask = cv2.estimateAffinePartial2D(src_pts, dest_pts, method=cv2.RANSAC, ransacReprojThreshold=5.0)
+        H = np.vstack([affine_matrix, [0, 0, 1]])
+
 
         # Separate good matches into inliers and outliers based on the mask.
         matches_mask = mask.ravel().tolist()
@@ -409,10 +420,6 @@ class ImageMosiacking:
         self.ymin_canvas = float('inf')
         self.xmax_canvas = float('-inf')
         self.ymax_canvas = float('-inf')
-
-        # for i in range(len(self.images)):
-        #     img_corners, xmin, ymin, xmax, ymax = self.transform_image_corners(
-        #          self.images[i], self.homographies[i])
 
         for i in range(len(self.images)):
             img_corners, xmin, ymin, xmax, ymax = self.transform_image_corners(
@@ -565,6 +572,8 @@ class ImageMosiacking:
         plt.show()
 
 
+    # TODO(KSorte): Write a establish non temporal links function
+    # that calls propose and validate non temporal links.
     def propose_non_temporal_links(self):
         # Compute max temporal distance
         max_distance = float('-inf')
@@ -574,9 +583,7 @@ class ImageMosiacking:
             distance = math.sqrt((point2[0] - point1[0])**2 + (point2[1] - point1[1])**2)
             max_distance = max(distance, max_distance)
 
-        # print("MAX DISTANCE", max_distance)
-        # Map to store all proposed links.
-        # Map from one index to a set of indices.
+        # Storing proposed links as a set of tuples.
         self.proposed_links = set()
         # Propose all links that are at a lesser distance than the maximum distance.
         for i in range(len(self.images)):
@@ -592,15 +599,10 @@ class ImageMosiacking:
                 point_i = self.image_center_trajectory[i, :]
                 point_j = self.image_center_trajectory[j, :]
                 distance = math.sqrt((point_j[0] - point_i[0])**2 + (point_j[1] - point_i[1])**2)
-                # TODO(KSorte): Make a hyper parameter
-                if distance < 1.2*max_distance:
-                # if distance < 2.0*max_distance:
+
+                if distance < self.LINK_PROPOSAL_DISTANCE_FACTOR*max_distance:
                     # Propose a new link. i -> j
                     self.proposed_links.add((i, j))
-                    # print("Connection", (i, j))
-                    # print("Link Distance", distance)
-
-        # print(self.proposed_links)
 
     def validate_proposed_links(self):
         # Iterate over a copy of the proposed_links set to avoid modifying it while iterating.
@@ -616,14 +618,12 @@ class ImageMosiacking:
             reprojection_error = self.compute_reprojection_error(i, j, H, inlier_matches)
 
             # Remove the link if the number of inlier matches is less than the threshold.
-            if reprojection_error > self.MAX_REPROJECTION_ERROR or len(inlier_matches) < self.MAX_INLIERS:
+            if reprojection_error > self.MAX_REPROJECTION_ERROR or len(inlier_matches) < self.MIN_INLIERS:
                 # Bad homography.
                 self.non_temporal_links.remove((i, j))
                 continue
 
             self.complete_graph[(i, j)] = [H, inlier_matches, reprojection_error]
-
-        # print(self.proposed_links)
 
     def align_images_in_temporal_sequence(self):
         """
