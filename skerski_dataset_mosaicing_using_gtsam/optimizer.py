@@ -9,7 +9,7 @@ class GTSAMOptimizer:
         self.poses = []
         self.initial_estimate = gtsam.Values()
 
-    # Add prior for the first pose (anchoring the graph)
+        # Add prior for the first pose (anchoring the graph)
         self.prior_noise = gtsam.noiseModel.Diagonal.Sigmas(np.array([0.1, 0.1, 0.1]))
 
     def add_initial_estimates_from_trajectory(self):
