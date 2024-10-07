@@ -503,7 +503,6 @@ class ImageMosiacking:
 
     def get_temporal_trajectory(self):
         self.image_center_trajectory = np.zeros((len(self.images), 3))
-        print("Formulating initial trajectory...")
         for i, H in enumerate(self.homographies):
             if i == 0:
                 continue
@@ -516,10 +515,6 @@ class ImageMosiacking:
             # Heading
             self.image_center_trajectory[i, 2] = self.image_center_trajectory[i-1, 2] - yaw
 
-            print("Image no: ", i)
-            print("H", H)
-            print("T_2D", T_2D)
-            print("YAW in degrees", yaw*180/3.141)
         # Plot the trajectory
         plt.figure()
         plt.plot(self.image_center_trajectory[:, 0], self.image_center_trajectory[:, 1], 'bo-', label='Trajectory')
@@ -560,8 +555,6 @@ class ImageMosiacking:
 
             # Update the ith homography
             self.adjusted_homographies[i] = homography
-
-        print("UPDATED")
 
     def plot_all_links(self):
         # Plot the trajectory
