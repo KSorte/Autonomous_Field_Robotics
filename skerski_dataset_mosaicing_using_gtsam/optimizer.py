@@ -87,21 +87,39 @@ class GTSAMOptimizer:
         # Optimize the graph
         self.result = self.optimizer.optimize()
 
+    def get_optimized_trajectory(self):
+        # Initialize a list to store the x, y, and yaw values
+        pose_list = []
+
+        # Iterate over the optimized result (assuming the result contains Pose2 objects)
+        for i in range(self.result.size()):
+            # Get the Pose2 object from the result
+            pose = self.result.atPose2(i)
+
+            # Extract x, y, and yaw (theta) values from the Pose2 object
+            x = pose.x()
+            y = pose.y()
+            yaw = pose.theta()
+
+            # Append the values as a list [x, y, yaw]
+            pose_list.append([x, y, yaw])
+
+        # Convert the list of poses into a NumPy array for easier handling
+        pose_array = np.array(pose_list)
+
+        return pose_array
+
     def plot_optimized_trajectory(self):
         """
-        Plots the optimized trajectory of poses.
+        Plots the optimized trajectory of poses using the extracted x, y, and yaw values.
         """
-        # Create lists to store x, y, and yaw values for the poses
-        x_vals = []
-        y_vals = []
-        yaw_vals = []
+        # Extract the optimized x, y, and yaw values as a NumPy array
+        pose_array = self.get_optimized_trajectory()
 
-        # Iterate through the optimized poses
-        for i in range(self.result.size()):
-            pose = self.result.atPose2(i)
-            x_vals.append(pose.x())
-            y_vals.append(pose.y())
-            yaw_vals.append(pose.theta())
+        # Split the array into x_vals, y_vals, and yaw_vals
+        x_vals = pose_array[:, 0]
+        y_vals = pose_array[:, 1]
+        yaw_vals = pose_array[:, 2]
 
         # Plot the positions (x, y)
         plt.figure()
@@ -127,7 +145,6 @@ class GTSAMOptimizer:
         # Show the plot
         plt.show()
 
-
     def plot_combined_trajectory_and_poses(self):
         """
         Plots the temporal trajectory of image centers and the optimized poses with orientations
@@ -144,19 +161,15 @@ class GTSAMOptimizer:
             plt.text(x, y, f'{i}', fontsize=12, color='red', ha='right')  # Display image number
 
         # --- Plot 2: Optimized Poses and Orientations ---
-        # Create lists to store x, y, and yaw values for the poses
-        x_vals = []
-        y_vals = []
-        yaw_vals = []
+        # Extract the optimized x, y, and yaw values using the extract_poses function
+        pose_array = self.get_optimized_trajectory()
 
-        # Iterate through the optimized poses
-        for i in range(self.result.size()):
-            pose = self.result.atPose2(i)
-            x_vals.append(pose.x())
-            y_vals.append(pose.y())
-            yaw_vals.append(pose.theta())
+        # Split the array into x_vals, y_vals, and yaw_vals
+        x_vals = pose_array[:, 0]
+        y_vals = pose_array[:, 1]
+        yaw_vals = pose_array[:, 2]
 
-        # Use a different color for the optimized trajectory
+        # Plot the optimized trajectory in green
         plt.plot(x_vals, y_vals, 'go-', label='Optimized Trajectory')
 
         # Plot the orientations (yaw) as arrows
@@ -165,10 +178,12 @@ class GTSAMOptimizer:
             # Scale for visualization
             dx = np.cos(yaw) * 0.5
             dy = np.sin(yaw) * 0.5
-            plt.arrow(x, y, dx, dy, head_width=2, head_length=3, fc='red', ec='red')  # Arrows to indicate yaw
+
+            # Arrows to indicate yaw
+            plt.arrow(x, y, dx, dy, head_width=2, head_length=3, fc='red', ec='red')
 
             # Annotate with the pose number
-            plt.text(x, y, str(idx), fontsize=12, color='blue')  # Add pose number next to each pose
+            plt.text(x, y, str(idx), fontsize=12, color='blue')
 
         # Add labels, title, and legend
         plt.xlabel('X Position (in reference frame)')
