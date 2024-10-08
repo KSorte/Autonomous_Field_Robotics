@@ -371,7 +371,8 @@ class ImageMosiacking:
         # Return the mean reprojection error
         return np.mean(errors)
 
-    def transform_image_corners(self, image, H):
+    @staticmethod
+    def transform_image_corners(image, H):
         """
         Transforms the corner points of an image using the given homography matrix.
 
@@ -422,7 +423,7 @@ class ImageMosiacking:
         self.ymax_canvas = float('-inf')
 
         for i in range(len(self.images)):
-            img_corners, xmin, ymin, xmax, ymax = self.transform_image_corners(
+            img_corners, xmin, ymin, xmax, ymax = ImageMosiacking.transform_image_corners(
                  self.images[i], self.adjusted_homographies[i])
 
             self.xmin_canvas = min(xmin, self.xmin_canvas)
@@ -452,7 +453,6 @@ class ImageMosiacking:
         canvas_mask = np.zeros((self.canvas_y_size, self.canvas_x_size), dtype=np.uint8)
 
         for i in range(len(self.images)):
-            # H = self.homographies[i]
             H = self.adjusted_homographies[i]
             img = self.images[i]
 
@@ -460,7 +460,7 @@ class ImageMosiacking:
             warped_img = cv2.warpPerspective(np.copy(img), T @ H, (self.canvas_x_size, self.canvas_y_size))
 
             # Get the corners of the warped image
-            corner_pts_warped_img, _, _, _, _ = self.transform_image_corners(self.images[i], T @ H)
+            corner_pts_warped_img, _, _, _, _ = ImageMosiacking.transform_image_corners(self.images[i], T @ H)
             corner_pts_warped_img = corner_pts_warped_img.reshape(-1, 1, 2)
 
             # Create a mask for the warped image
@@ -503,7 +503,6 @@ class ImageMosiacking:
 
     def get_temporal_trajectory(self):
         self.image_center_trajectory = np.zeros((len(self.images), 3))
-        print("Formulating initial trajectory...")
         for i, H in enumerate(self.homographies):
             if i == 0:
                 continue
@@ -516,10 +515,6 @@ class ImageMosiacking:
             # Heading
             self.image_center_trajectory[i, 2] = self.image_center_trajectory[i-1, 2] - yaw
 
-            print("Image no: ", i)
-            print("H", H)
-            print("T_2D", T_2D)
-            print("YAW in degrees", yaw*180/3.141)
         # Plot the trajectory
         plt.figure()
         plt.plot(self.image_center_trajectory[:, 0], self.image_center_trajectory[:, 1], 'bo-', label='Trajectory')
@@ -534,6 +529,32 @@ class ImageMosiacking:
         plt.legend()
         plt.grid(True)
         plt.show()
+
+    def update_homographies(self, pose_trajectory):
+        """
+        Converts the numpy poses into 3x3 homography matrices using the yaw for rotation and
+        x, y for translation. Overwrites the homographies in self.adjusted_homographies.
+
+        Parameters:
+        pose_trajectory (np.ndarray): Array of poses where each row contains [x, y, yaw].
+        """
+        # Iterate over each pose and update the homographies
+        for i, (x, y, yaw) in enumerate(pose_trajectory):
+            # Create the 3x3 homography matrix
+            homography = np.eye(3)  # Start with an identity matrix
+
+            # Fill the rotation part (2x2 top-left) using yaw (Euclidean transformation)
+            homography[0, 0] = np.cos(yaw)
+            homography[0, 1] = np.sin(yaw)
+            homography[1, 0] = -np.sin(yaw)
+            homography[1, 1] = np.cos(yaw)
+
+            # Fill the translation part (last column: x, y)
+            homography[0, 2] = -x
+            homography[1, 2] = -y
+
+            # Update the ith homography
+            self.adjusted_homographies[i] = homography
 
     def plot_all_links(self):
         # Plot the trajectory

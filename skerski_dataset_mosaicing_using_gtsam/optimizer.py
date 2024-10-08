@@ -1,7 +1,9 @@
 import gtsam
+import gtsam.utils.plot as gtsam_plot
 import matplotlib.pyplot as plt
 import numpy as np
 import image_mosiacing as im
+from matplotlib.patches import Ellipse
 
 class GTSAMOptimizer:
     def __init__(self,image_mosiacking_obj):
@@ -9,7 +11,7 @@ class GTSAMOptimizer:
         self.poses = []
         self.initial_estimate = gtsam.Values()
 
-    # Add prior for the first pose (anchoring the graph)
+        # Add prior for the first pose (anchoring the graph)
         self.prior_noise = gtsam.noiseModel.Diagonal.Sigmas(np.array([0.1, 0.1, 0.1]))
 
     def add_initial_estimates_from_trajectory(self):
@@ -87,46 +89,27 @@ class GTSAMOptimizer:
         # Optimize the graph
         self.result = self.optimizer.optimize()
 
-    def plot_optimized_trajectory(self):
-        """
-        Plots the optimized trajectory of poses.
-        """
-        # Create lists to store x, y, and yaw values for the poses
-        x_vals = []
-        y_vals = []
-        yaw_vals = []
+    def get_optimized_trajectory(self):
+        # Initialize a list to store the x, y, and yaw values
+        pose_list = []
 
-        # Iterate through the optimized poses
+        # Iterate over the optimized result (assuming the result contains Pose2 objects)
         for i in range(self.result.size()):
+            # Get the Pose2 object from the result
             pose = self.result.atPose2(i)
-            x_vals.append(pose.x())
-            y_vals.append(pose.y())
-            yaw_vals.append(pose.theta())
 
-        # Plot the positions (x, y)
-        plt.figure()
-        plt.plot(x_vals, y_vals, 'bo-', label='Optimized Trajectory')
+            # Extract x, y, and yaw (theta) values from the Pose2 object
+            x = pose.x()
+            y = pose.y()
+            yaw = pose.theta()
 
-        # Plot the orientations (yaw) as arrows
-        for idx, (x, y, yaw) in enumerate(zip(x_vals, y_vals, yaw_vals)):
-            # Arrow to represent orientation (yaw)
-            dx = np.cos(yaw) * 0.5  # Scale for visualization
-            dy = np.sin(yaw) * 0.5
-            plt.arrow(x, y, dx, dy, head_width=2, head_length=3, fc='red', ec='red')
+            # Append the values as a list [x, y, yaw]
+            pose_list.append([x, y, yaw])
 
-            # Annotate with the pose number
-            plt.text(x, y, str(idx), fontsize=12, color='blue')  # Add pose number next to each pose
+        # Convert the list of poses into a NumPy array for easier handling
+        pose_array = np.array(pose_list)
 
-        # Add labels and title
-        plt.xlabel('X Position')
-        plt.ylabel('Y Position')
-        plt.title('Optimized Poses and Orientations')
-        plt.legend()
-        plt.grid(True)
-
-        # Show the plot
-        plt.show()
-
+        return pose_array
 
     def plot_combined_trajectory_and_poses(self):
         """
@@ -144,19 +127,15 @@ class GTSAMOptimizer:
             plt.text(x, y, f'{i}', fontsize=12, color='red', ha='right')  # Display image number
 
         # --- Plot 2: Optimized Poses and Orientations ---
-        # Create lists to store x, y, and yaw values for the poses
-        x_vals = []
-        y_vals = []
-        yaw_vals = []
+        # Extract the optimized x, y, and yaw values using the extract_poses function
+        pose_array = self.get_optimized_trajectory()
 
-        # Iterate through the optimized poses
-        for i in range(self.result.size()):
-            pose = self.result.atPose2(i)
-            x_vals.append(pose.x())
-            y_vals.append(pose.y())
-            yaw_vals.append(pose.theta())
+        # Split the array into x_vals, y_vals, and yaw_vals
+        x_vals = pose_array[:, 0]
+        y_vals = pose_array[:, 1]
+        yaw_vals = pose_array[:, 2]
 
-        # Use a different color for the optimized trajectory
+        # Plot the optimized trajectory in green
         plt.plot(x_vals, y_vals, 'go-', label='Optimized Trajectory')
 
         # Plot the orientations (yaw) as arrows
@@ -165,10 +144,12 @@ class GTSAMOptimizer:
             # Scale for visualization
             dx = np.cos(yaw) * 0.5
             dy = np.sin(yaw) * 0.5
-            plt.arrow(x, y, dx, dy, head_width=2, head_length=3, fc='red', ec='red')  # Arrows to indicate yaw
+
+            # Arrows to indicate yaw
+            plt.arrow(x, y, dx, dy, head_width=2, head_length=3, fc='red', ec='red')
 
             # Annotate with the pose number
-            plt.text(x, y, str(idx), fontsize=12, color='blue')  # Add pose number next to each pose
+            plt.text(x, y, str(idx), fontsize=12, color='blue')
 
         # Add labels, title, and legend
         plt.xlabel('X Position (in reference frame)')
@@ -176,6 +157,34 @@ class GTSAMOptimizer:
         plt.title('Combined Plot of Image Centers and Optimized Poses')
         plt.legend()
         plt.grid(True)
+        plt.show()
 
-        # Show the plot
+
+    def plot_covariances(self, phase="before"):
+        """
+        Plots covariance ellipses for the poses in the graph either before or after optimization.
+
+        Parameters:
+        phase (str): Either 'before' or 'after', to indicate whether to plot the covariances
+                    before or after optimization.
+        """
+        if phase == "before":
+            # Marginals before optimization (based on the initial estimate)
+            marginals = gtsam.Marginals(self.graph, self.initial_estimate)
+            title = "Covariances Before Optimization"
+        elif phase == "after":
+            # Marginals after optimization
+            marginals = gtsam.Marginals(self.graph, self.result)
+            title = "Covariances After Optimization"
+        else:
+            raise ValueError("Invalid phase argument. Choose either 'before' or 'after'.")
+
+        for i in range(1, len(self.img_mos.images)):
+            gtsam_plot.plot_pose2(0, self.result.atPose2(i), 0.5,
+                                    marginals.marginalCovariance(i))
+
+        plt.title(title)
+        plt.axis('equal')
+        plt.grid(True)
+        plt.minorticks_on()
         plt.show()
