@@ -1,7 +1,9 @@
 import gtsam
+import gtsam.utils.plot as gtsam_plot
 import matplotlib.pyplot as plt
 import numpy as np
 import image_mosiacing as im
+from matplotlib.patches import Ellipse
 
 class GTSAMOptimizer:
     def __init__(self,image_mosiacking_obj):
@@ -109,42 +111,6 @@ class GTSAMOptimizer:
 
         return pose_array
 
-    def plot_optimized_trajectory(self):
-        """
-        Plots the optimized trajectory of poses using the extracted x, y, and yaw values.
-        """
-        # Extract the optimized x, y, and yaw values as a NumPy array
-        pose_array = self.get_optimized_trajectory()
-
-        # Split the array into x_vals, y_vals, and yaw_vals
-        x_vals = pose_array[:, 0]
-        y_vals = pose_array[:, 1]
-        yaw_vals = pose_array[:, 2]
-
-        # Plot the positions (x, y)
-        plt.figure()
-        plt.plot(x_vals, y_vals, 'bo-', label='Optimized Trajectory')
-
-        # Plot the orientations (yaw) as arrows
-        for idx, (x, y, yaw) in enumerate(zip(x_vals, y_vals, yaw_vals)):
-            # Arrow to represent orientation (yaw)
-            dx = np.cos(yaw) * 0.5  # Scale for visualization
-            dy = np.sin(yaw) * 0.5
-            plt.arrow(x, y, dx, dy, head_width=2, head_length=3, fc='red', ec='red')
-
-            # Annotate with the pose number
-            plt.text(x, y, str(idx), fontsize=12, color='blue')  # Add pose number next to each pose
-
-        # Add labels and title
-        plt.xlabel('X Position')
-        plt.ylabel('Y Position')
-        plt.title('Optimized Poses and Orientations')
-        plt.legend()
-        plt.grid(True)
-
-        # Show the plot
-        plt.show()
-
     def plot_combined_trajectory_and_poses(self):
         """
         Plots the temporal trajectory of image centers and the optimized poses with orientations
@@ -191,6 +157,34 @@ class GTSAMOptimizer:
         plt.title('Combined Plot of Image Centers and Optimized Poses')
         plt.legend()
         plt.grid(True)
+        plt.show()
 
-        # Show the plot
+
+    def plot_covariances(self, phase="before"):
+        """
+        Plots covariance ellipses for the poses in the graph either before or after optimization.
+
+        Parameters:
+        phase (str): Either 'before' or 'after', to indicate whether to plot the covariances
+                    before or after optimization.
+        """
+        if phase == "before":
+            # Marginals before optimization (based on the initial estimate)
+            marginals = gtsam.Marginals(self.graph, self.initial_estimate)
+            title = "Covariances Before Optimization"
+        elif phase == "after":
+            # Marginals after optimization
+            marginals = gtsam.Marginals(self.graph, self.result)
+            title = "Covariances After Optimization"
+        else:
+            raise ValueError("Invalid phase argument. Choose either 'before' or 'after'.")
+
+        for i in range(1, len(self.img_mos.images)):
+            gtsam_plot.plot_pose2(0, self.result.atPose2(i), 0.5,
+                                    marginals.marginalCovariance(i))
+
+        plt.title(title)
+        plt.axis('equal')
+        plt.grid(True)
+        plt.minorticks_on()
         plt.show()
