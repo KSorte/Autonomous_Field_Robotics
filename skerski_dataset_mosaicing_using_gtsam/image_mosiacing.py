@@ -548,16 +548,16 @@ class ImageMosiacking:
         """
         # Iterate over each pose and update the homographies
         for i, (x, y, yaw) in enumerate(pose_trajectory):
-            # Create the 3x3 homography matrix
-            homography = np.eye(3)  # Start with an identity matrix
+            # 3x3 homography matrix
+            homography = np.eye(3)
 
-            # Fill the rotation part (2x2 top-left) using yaw (Euclidean transformation)
+            # Rotation part using yaw
             homography[0, 0] = np.cos(yaw)
             homography[0, 1] = np.sin(yaw)
             homography[1, 0] = -np.sin(yaw)
             homography[1, 1] = np.cos(yaw)
 
-            # Fill the translation part (last column: x, y)
+            # Translation
             homography[0, 2] = -x
             homography[1, 2] = -y
 
