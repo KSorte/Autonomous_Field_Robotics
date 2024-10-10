@@ -56,10 +56,12 @@ class GTSAMOptimizer:
 
             # Noise model based off the reprojection error.
             # TODO (KSorte): Turn 3.141 to np.pi.
-            err = [error, error, error*np.pi/180]
+            # err = [error, error, error*np.pi/180] # OLD
+            factor = 4.0
+            err = [factor*error, factor*error, error*np.pi/180]
             if abs(i - j) > 1:
                 # Smaller covariance for non temporal
-                err = [error/2, error/2, error*0.5*np.pi/180]
+                err = [factor*error/2, factor*error/2, factor*error*0.5*np.pi/180]
 
             noise_model = gtsam.noiseModel.Diagonal.Sigmas(np.array(err))
 

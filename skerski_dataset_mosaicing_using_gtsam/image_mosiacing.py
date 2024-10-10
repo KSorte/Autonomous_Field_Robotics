@@ -12,6 +12,7 @@ class ImageMosiacking:
 
     def __init__(self, image_directories,
                  display_feature_matching = False,
+                 use_blending = False,
                  mosaic_name = "mosiac",
                  link_proposal_distance_factor = 1.5,
                  max_reprojection_error = 2.0,
@@ -47,6 +48,9 @@ class ImageMosiacking:
 
         # Distance factor for proposing new links.
         self.LINK_PROPOSAL_DISTANCE_FACTOR = link_proposal_distance_factor
+
+        # Whether to use blending
+        self.use_blending = use_blending
 
     def get_images_for_mosaicking(self):
         """
@@ -435,7 +439,7 @@ class ImageMosiacking:
         self.canvas_x_size = math.ceil(self.xmax_canvas - self.xmin_canvas)
         self.canvas_y_size = math.ceil(self.ymax_canvas - self.ymin_canvas)
 
-    def project_images_on_canvas(self):
+    def project_images_on_canvas(self, mosiac_name = "mosiac"):
         """
         Maps the images using their homographies into the image plane of the central image.
         Now includes dynamic blending for overlapping regions.
@@ -474,15 +478,19 @@ class ImageMosiacking:
             if np.sum(overlap_mask) > 0:
                 overlap_indices = np.where(overlap_mask > 0)
 
-                # Distance transform to calculate the proximity to the edge of each mask
-                dist_canvas = cv2.distanceTransform(canvas_mask, cv2.DIST_L2, 5)
-                dist_warped = cv2.distanceTransform(warped_img_mask, cv2.DIST_L2, 5)
+                if self.use_blending:
+                    # Distance transform to calculate the proximity to the edge of each mask
+                    dist_canvas = cv2.distanceTransform(canvas_mask, cv2.DIST_L2, 5)
+                    dist_warped = cv2.distanceTransform(warped_img_mask, cv2.DIST_L2, 5)
 
-                # Normalize distances to avoid division by zero
-                dist_sum = dist_canvas[overlap_indices] + dist_warped[overlap_indices] + 1e-6
+                    # Normalize distances to avoid division by zero
+                    dist_sum = dist_canvas[overlap_indices] + dist_warped[overlap_indices] + 1e-6
 
-                # Calculate alpha blending dynamically based on distance
-                alpha = dist_warped[overlap_indices] / dist_sum
+                    # Calculate alpha blending dynamically based on distance
+                    alpha = dist_warped[overlap_indices] / dist_sum
+                else:
+                    # alpha is 1. No blending.
+                    alpha = np.ones(len(overlap_indices[0]))
 
                 # Blend the overlapping pixels dynamically
                 self.canvas[overlap_indices] = (self.canvas[overlap_indices].astype(np.float32) * (1 - alpha[:, np.newaxis]) +
@@ -497,7 +505,7 @@ class ImageMosiacking:
 
         # Plot canvas with blended images
         plt.imshow(self.canvas)
-        plt.imsave(self.mosaic_name + '.JPG', self.canvas)
+        plt.imsave(mosiac_name + '.JPG', self.canvas)
         plt.show()
 
 
@@ -646,7 +654,7 @@ class ImageMosiacking:
 
             self.complete_graph[(i, j)] = [H, inlier_matches, reprojection_error]
 
-    def align_images_in_temporal_sequence(self):
+    def align_images_in_temporal_sequence(self, mosiac_name = "mosiac"):
         """
         Gets image features, matches and homographies.
         Renders the panorama by warping each image using its homography and placing it on the canvas.
@@ -655,4 +663,4 @@ class ImageMosiacking:
         self.get_features()
         self.get_matches_for_temporal_sequence_and_homographies()
         self.get_panorama_canvas()
-        self.project_images_on_canvas()
+        self.project_images_on_canvas(mosiac_name=mosiac_name)
