@@ -6,13 +6,15 @@ import image_mosiacing as im
 from matplotlib.patches import Ellipse
 
 class GTSAMOptimizer:
-    def __init__(self,image_mosiacking_obj):
+    def __init__(self,image_mosiacking_obj, noise_factor = 4.0, prior_noise = 10.0):
         self.img_mos = image_mosiacking_obj
         self.poses = []
         self.initial_estimate = gtsam.Values()
 
         # Add prior for the first pose (anchoring the graph)
-        self.prior_noise = gtsam.noiseModel.Diagonal.Sigmas(np.array([10.0, 10.0, np.deg2rad(10)]))
+        self.prior_noise = gtsam.noiseModel.Diagonal.Sigmas(np.array([prior_noise, prior_noise, np.deg2rad(10)]))
+
+        self.noise_factor = noise_factor
 
     def add_initial_estimates_from_trajectory(self):
         """
@@ -54,20 +56,16 @@ class GTSAMOptimizer:
             # Get link coordinates.
             i, j = link
             # Reprojection error
-            error = self.img_mos.complete_graph[link][2]
+            reprojection_error = self.img_mos.complete_graph[link][2]
 
             # Matches
             matches = self.img_mos.complete_graph[link][1]
 
-            noise = GTSAMOptimizer.get_factor_noise(len(matches), error)
+            noise = GTSAMOptimizer.get_factor_noise(len(matches), reprojection_error)
             error = noise
 
             # Noise model based off the reprojection error.
-            factor = 4.0
-            err = [factor*error, factor*error, error*np.pi/180]
-            # if abs(i - j) > 1:
-            #     # Smaller covariance for non temporal
-            #     err = [factor*error/2, factor*error/2, factor*error*0.5*np.pi/180]
+            err = [self.noise_factor*error, self.noise_factor*error, error*np.pi/180]
 
             noise_model = gtsam.noiseModel.Diagonal.Sigmas(np.array(err))
 
