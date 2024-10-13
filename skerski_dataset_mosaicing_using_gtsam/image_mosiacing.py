@@ -18,7 +18,31 @@ class ImageMosiacking:
                  max_reprojection_error = 2.0,
                  min_inliers = 25):
         """
-        Initializes the ImageMosiacking class with placeholder values.
+        Initializes the ImageMosaicking class.
+
+        Parameters:
+        -----------
+        image_directories : list
+            Directories containing images for mosaicking.
+        display_feature_matching : bool, optional
+            If True, displays feature matching (default: False).
+        use_blending : bool, optional
+            Enables blending during mosaicking (default: False).
+        mosaic_name : str, optional
+            Name of the output mosaic (default: "mosaic").
+        link_proposal_distance_factor : float, optional
+            Factor to multiply to maximum temporal distance between links for proposing new links (default: 1.5).
+        max_reprojection_error : float, optional
+            Maximum reprojection error for validating overlaps (default: 2.0).
+        min_inliers : int, optional
+            Minimum number of inliers for link validation (default: 25).
+
+        Attributes:
+        -----------
+        - self.sift : cv2.SIFT
+            SIFT detector initialized with specific parameters.
+        - self.complete_graph : dict
+            Stores links, inlier matches, and homographies for images.
         """
         self.images = []
 
@@ -100,27 +124,25 @@ class ImageMosiacking:
             cols = 3  # You can adjust the number of columns based on preference
             rows = math.ceil(num_images / cols)
 
-            # TODO (KSorte): Make image plotting a parameter.
-            # TODO (KSorte): Plot in a smaller grid.
-            # # Create a grid of subplots
-            # # Adjust the figure size based on the number of rows
-            # fig, axes = plt.subplots(rows, cols, figsize=(15, 5 * rows))
+        # Create a figure and a grid of subplots
+        fig, axes = plt.subplots(rows, cols, figsize=(15, 5 * rows))
 
-            # # Flatten the axes array to easily iterate over it
-            # axes = axes.flatten()
+        # Flatten the axes array for easy iteration
+        axes = axes.flatten()
 
-            # # Loop through images and plot them in the grid
-            # for i, image in enumerate(self.images):
-            #     # Convert BGR to RGB for Matplotlib
-            #     axes[i].imshow(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
-            #     axes[i].axis('off')  # Turn off the axis
+        # Loop through the images and plot each in the corresponding grid cell
+        for i, image in enumerate(self.images):
+            # Convert BGR to RGB for display in Matplotlib
+            axes[i].imshow(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
+            axes[i].axis('off')  # Turn off axis for a cleaner look
 
-            # # Turn off unused axes (if any)
-            # for j in range(i + 1, len(axes)):
-            #     axes[j].axis('off')
+        # Turn off any unused axes (if the grid is larger than the number of images)
+        for j in range(i + 1, len(axes)):
+            axes[j].axis('off')
 
-            # plt.tight_layout()  # Adjust layout to avoid overlap
-            # plt.show()
+        # Adjust layout to avoid overlap
+        plt.tight_layout()
+        plt.show()
 
     def get_features(self):
         """
@@ -350,15 +372,28 @@ class ImageMosiacking:
         return T_2D, yaw
 
     def compute_reprojection_error(self, i, j, H, inlier_matches):
+        """
+        Computes the mean reprojection error between matched feature points.
 
-        # inliers_idx = np.where(inlier_matches == 1)
-        # src = src_points[inliers_idx[0]]
-        # dst = dst_points[inliers_idx[0]]
+        Parameters:
+        -----------
+        i : int
+            Index of the source image.
+        j : int
+            Index of the destination image.
+        H : np.ndarray
+            Homography matrix between the two images.
+        inlier_matches : list
+            List of inlier feature matches between the images.
+
+        Returns:
+        --------
+        float
+            The mean Euclidean distance between the actual and projected points.
+        """
         # Get feature points from the inlier matches.
         src_pts = np.float32([self.keypoints[i][m[0].queryIdx].pt for m in inlier_matches])
         dest_pts = np.float32([self.keypoints[j][m[0].trainIdx].pt for m in inlier_matches])
-        # src_transformed = cv2.perspectiveTransform(src_pts, H)
-        # errors = np.linalg.norm(src_transformed.reshape(-1, 2) - dest_pts.reshape(-1, 2), axis=1)
 
         # Convert points to homogeneous coordinates
         src_pts_homog = np.hstack((src_pts, np.ones((src_pts.shape[0], 1))))
@@ -510,6 +545,16 @@ class ImageMosiacking:
 
 
     def get_temporal_trajectory(self):
+        """
+        Computes and plots the temporal trajectory of image centers using homographies.
+
+        Updates the image center trajectory by iterating through homographies and
+        extracting 2D translation and yaw between consecutive images.
+
+        Returns:
+        --------
+        None
+        """
         self.image_center_trajectory = np.zeros((len(self.images), 3))
         for i, H in enumerate(self.homographies):
             if i == 0:
@@ -565,6 +610,16 @@ class ImageMosiacking:
             self.adjusted_homographies[i] = homography
 
     def plot_all_links(self):
+        """
+        Plots the temporal trajectory of image centers and valid non-temporal links.
+
+        Displays the trajectory with annotated image numbers and overlays
+        validated links between non-temporal images.
+
+        Returns:
+        --------
+        None
+        """
         # Plot the trajectory
         plt.figure()
 
@@ -604,6 +659,16 @@ class ImageMosiacking:
     # TODO(KSorte): Write a establish non temporal links function
     # that calls propose and validate non temporal links.
     def propose_non_temporal_links(self):
+        """
+        Proposes non-temporal links between images based on spatial distance in the temporal trajectory.
+
+        Identifies and stores links between image pairs whose distance is less than a
+        threshold based on the maximum temporal distance, excluding adjacent temporal links.
+
+        Returns:
+        --------
+        None
+        """
         # Compute max temporal distance
         max_distance = float('-inf')
         for i in range(len(self.image_center_trajectory) - 1):
@@ -634,6 +699,16 @@ class ImageMosiacking:
                     self.proposed_links.add((i, j))
 
     def validate_proposed_links(self):
+        """
+        Validates proposed non-temporal links using a max reprojection error and minimum number of inlier matches.
+
+        Removes links with high reprojection error or insufficient inlier matches,
+        and stores valid links along with their homography, inliers, and error in the complete graph.
+
+        Returns:
+        --------
+        None
+        """
         # Iterate over a copy of the proposed_links set to avoid modifying it while iterating.
         self.non_temporal_links = self.proposed_links.copy()
         for link in self.proposed_links:
