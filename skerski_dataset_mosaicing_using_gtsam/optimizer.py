@@ -7,6 +7,28 @@ from matplotlib.patches import Ellipse
 
 class GTSAMOptimizer:
     def __init__(self,image_mosiacking_obj, noise_factor = 4.0, prior_noise = 10.0):
+        """
+        Initializes the image mosaicking optimizer with GTSAM.
+
+        Parameters:
+        -----------
+        image_mosiacking_obj : object
+            The image mosaicking object for stitching and graph building.
+
+        noise_factor : float, optional
+            Scaling factor for noise in the graph (default is 4.0).
+
+        prior_noise : float, optional
+            Noise value for the prior factor (default is 10.0).
+
+        Attributes:
+        -----------
+        - self.img_mos : Image mosaicking object.
+        - self.poses : List to store image sequence poses.
+        - self.initial_estimate : Initial pose estimates for GTSAM optimization.
+        - self.prior_noise : Noise model for the first pose.
+        - self.noise_factor : Scaling factor for reprojection noise.
+    """
         self.img_mos = image_mosiacking_obj
         self.poses = []
         self.initial_estimate = gtsam.Values()
@@ -42,6 +64,27 @@ class GTSAMOptimizer:
 
     # TODO(KSorte): Call build and optimize graph in a single function.
     def build_graph(self):
+        """
+        Builds a GTSAM NonlinearFactorGraph for image mosaicking.
+
+        The method:
+        1. Initializes the graph and adds a prior factor for the start pose using the image center trajectory.
+        2. Adds initial estimates from the trajectory.
+        3. Iterates over links in the complete graph, extracting the homography, matches, and reprojection error.
+        4. Calculates the noise model based on the reprojection error and number of matches.
+        5. Computes the 2D relative pose from the homography and adds BetweenFactorPose2 for each link.
+
+        Attributes used:
+        - self.graph: GTSAM factor graph.
+        - self.img_mos.image_center_trajectory: Starting pose.
+        - self.prior_noise: Noise model for the prior factor.
+        - self.img_mos.complete_graph: Contains links, homographies, matches, and reprojection errors.
+        - self.noise_factor: Scaling factor for noise.
+
+        Returns:
+        --------
+        None
+        """
         self.graph = gtsam.NonlinearFactorGraph()
 
         start_x = self.img_mos.image_center_trajectory[0, 0]
@@ -98,6 +141,17 @@ class GTSAMOptimizer:
         self.result = self.optimizer.optimize()
 
     def get_optimized_trajectory(self):
+        """
+        Returns the optimized trajectory as a NumPy array of [x, y, yaw] values.
+
+        Iterates over the optimized results, extracts Pose2 (x, y, yaw) values, and
+        stores them in a list, which is then converted to a NumPy array.
+
+        Returns:
+        --------
+        np.ndarray
+            Array of optimized poses, each as [x, y, yaw].
+        """
         # Initialize a list to store the x, y, and yaw values
         pose_list = []
 
