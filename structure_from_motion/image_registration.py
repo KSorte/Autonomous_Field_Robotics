@@ -11,7 +11,8 @@ class ImageRegistration:
     """
 
     def __init__(self, image_directories,
-                 display_feature_matching = False,
+                 visualize_features = False,
+                 visualize_epipolar_lines = False,
                  sift_nOctaveLayers = 3,
                  sift_contrastThreshold = 0.04,
                  sift_edgeThreshold = 10,
@@ -32,7 +33,8 @@ class ImageRegistration:
                                     sigma = sift_sigma)
 
 
-        self.display_feature_matching = display_feature_matching
+        self.visualize_features = visualize_features
+        self.visualize_epipolar_lines = visualize_epipolar_lines
         self.ransac_reproj_thres = ransac_reproj_thres
 
     def get_images_for_registration(self):
@@ -214,6 +216,82 @@ class ImageRegistration:
 
         return F, inlier_matches
 
+    def drawlines(self, first_index, second_index, lines, pts1, pts2):
+        """
+        Draw epipolar lines on images.
+
+        Args:
+            first_index (int): Index of the first image in self.images.
+            second_index (int): Index of the second image in self.images.
+            lines (numpy.ndarray): Epipolar lines.
+            pts1 (numpy.ndarray): Keypoints in the first image.
+            pts2 (numpy.ndarray): Corresponding keypoints in the second image.
+
+        Returns:
+            tuple: Two images with epipolar lines and points drawn on them.
+        """
+        img1 = self.images[first_index].copy()
+        img2 = self.images[second_index].copy()
+
+        # Get image dimensions
+        r, c = img1.shape[:2]
+
+        for r, pt1, pt2 in zip(lines, pts1, pts2):
+            color = tuple(np.random.randint(0, 255, 3).tolist())
+
+            # Calculate the endpoints of the epipolar line
+            x0, y0 = map(int, [0, -r[2] / r[1]])
+            x1, y1 = map(int, [c, -(r[2] + r[0] * c) / r[1]])
+
+            # Draw the epipolar line on img1
+            img1 = cv2.line(img1, (x0, y0), (x1, y1), color, 3)
+
+            # Draw circles for the keypoints
+            pt1 = tuple(map(int, pt1.ravel()))
+            pt2 = tuple(map(int, pt2.ravel()))
+            img1 = cv2.circle(img1, pt1, 10, color, -1)
+            img2 = cv2.circle(img2, pt2, 10, color, -1)
+
+        return img1, img2
+
+    def draw_epipolar_lines(self, first_index, second_index):
+        """
+        Visualizes epipolar lines between two images.
+
+        Args:
+            first_index (int): Index of the first image in self.images.
+            second_index (int): Index of the second image in self.images.
+        """
+        # Get matches
+        good_matches = self.match_features(first_index, second_index)
+
+        # Compute fundamental matrix
+        F, inlier_matches = self.compute_fundamental_matrix(first_index, second_index, good_matches)
+
+        # Get coordinates of the matched keypoints from both images
+        pts1 = np.float32([self.keypoints[first_index][m[0].queryIdx].pt for m in inlier_matches]).reshape(-1, 1, 2)
+        pts2 = np.float32([self.keypoints[second_index][m[0].trainIdx].pt for m in inlier_matches]).reshape(-1, 1, 2)
+
+        # Compute epilines for points in second image
+        lines1 = cv2.computeCorrespondEpilines(pts2.reshape(-1, 1, 2), 2, F)
+        lines1 = lines1.reshape(-1, 3)
+
+        # Compute epilines for points in first image
+        lines2 = cv2.computeCorrespondEpilines(pts1.reshape(-1, 1, 2), 1, F)
+        lines2 = lines2.reshape(-1, 3)
+
+        # Draw epilines and points
+        img1, img2 = self.drawlines(first_index, second_index, lines1, pts1, pts2)
+        img3, img4 = self.drawlines(second_index, first_index, lines2, pts2, pts1)
+
+        # Display results
+        plt.figure(figsize=(12, 6))
+        plt.subplot(121), plt.imshow(cv2.cvtColor(img1, cv2.COLOR_BGR2RGB))
+        plt.title(f'Epipolar lines on image {first_index}')
+        plt.subplot(122), plt.imshow(cv2.cvtColor(img3, cv2.COLOR_BGR2RGB))
+        plt.title(f'Epipolar lines on image {second_index}')
+        plt.show()
+
     def get_matches_and_fundamental_matrices(self):
         """
         Computes feature matches and fundamental matrices between consecutive images in a sequence.
@@ -227,8 +305,6 @@ class ImageRegistration:
         """
         self.fundamental_matrices = []
 
-        # self.min_inlier_matches = float('inf')
-
         for i in range(len(self.images) - 1):
             # Get matches for i and i + 1 th image
             good_matches = self.match_features(i, i+1)
@@ -237,3 +313,7 @@ class ImageRegistration:
 
             # Store homography and matches.
             self.fundamental_matrices.append(F)
+
+            if self.visualize_epipolar_lines:
+                # Visualize epipolar lines
+                self.draw_epipolar_lines(i, i+1)
