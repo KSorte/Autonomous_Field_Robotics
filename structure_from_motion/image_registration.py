@@ -16,6 +16,7 @@ class ImageRegistration:
                  sift_contrastThreshold = 0.04,
                  sift_edgeThreshold = 10,
                  sift_sigma = 1.6,
+                 ransac_reproj_thres = 5.0,
                  min_inliers = 25):
         """
         Initializes the ImageRegistration class with placeholder values.
@@ -32,6 +33,7 @@ class ImageRegistration:
 
 
         self.display_feature_matching = display_feature_matching
+        self.ransac_reproj_thres = ransac_reproj_thres
 
     def get_images_for_registration(self):
         """
@@ -194,43 +196,44 @@ class ImageRegistration:
 
         return good_matches
 
-    def get_matches_for_temporal_sequence_and_homographies(self):
+
+    def compute_fundamental_matrix(self, first_index, second_index, good_matches):
+        # Get coordinates of the matched keypoints from both images.
+        first_pts = np.float32([self.keypoints[first_index][m[0].queryIdx].pt for m in good_matches]).reshape(-1, 1, 2)
+        second_pts = np.float32([self.keypoints[second_index][m[0].trainIdx].pt for m in good_matches]).reshape(-1, 1, 2)
+        F, mask = cv2.findFundamentalMat(first_pts, second_pts, cv2.FM_RANSAC, ransacReprojThreshold=self.ransac_reproj_thres)
+
+        # Select only inlier points
+        first_pts = first_pts[mask.ravel()==1]
+        second_pts = second_pts[mask.ravel()==1]
+
+        # Separate good matches into inliers and outliers based on the mask.
+        matches_mask = mask.ravel().tolist()
+        inlier_matches = [good_matches[i] for i in range(len(good_matches)) if matches_mask[i]]
+        outlier_matches = [good_matches[i] for i in range(len(good_matches)) if not matches_mask[i]]
+
+        return F, inlier_matches
+
+    def get_matches_and_fundamental_matrices(self):
         """
-        Computes feature matches and homographies between consecutive images in a sequence.
+        Computes feature matches and fundamental matrices between consecutive images in a sequence.
 
         Matches keypoints between consecutive images, visualizes the matches, and computes the
-        homography matrix for each image pair using RANSAC. The homographies are adjusted
-        relative to the first image.
+        fundamental matrix for each image pair using RANSAC.
 
         Attributes:
             self.image_feature_matches (list): Stores lists of good matches between consecutive images.
             self.homographies (list): Stores the homographies computed between consecutive image pairs.
         """
-        self.homographies = []
-        # Assign identity matrix
-        self.homographies.append(np.eye(3))
-        self.min_inlier_matches = float('inf')
+        self.fundamental_matrices = []
+
+        # self.min_inlier_matches = float('inf')
 
         for i in range(len(self.images) - 1):
             # Get matches for i and i + 1 th image
-            good_matches = self.match_features(i+1, i)
-            H, inlier_matches = self.compute_homography(i+1, i, good_matches=good_matches)
+            good_matches = self.match_features(i, i+1)
+            # Get Fundamental Matrix and inlier matches.
+            F, inlier_matches = self.compute_fundamental_matrix(i, i+1, good_matches=good_matches)
 
             # Store homography and matches.
-            self.homographies.append(H)
-
-            # Add link with i+1 as source and i as the destination.
-            # NOTE: Store the NON ADJUSTED homographies.
-            self.complete_graph[(i+1, i)] = [H, inlier_matches]
-
-            # Reprojection error
-            self.complete_graph[(i+1, i)].append(self.compute_reprojection_error(i+1, i, H, inlier_matches))
-
-        self.adjusted_homographies = []
-        # Assign identity transform to the first image.
-        self.adjusted_homographies.append(np.eye(3))
-        # Adjust homographies with respect to the first image.
-        for i in range(1, len(self.homographies)):
-            # Adjust homographies
-            mosiacing_H = self.adjusted_homographies[i-1] @ self.homographies[i]
-            self.adjusted_homographies.append(mosiacing_H)
+            self.fundamental_matrices.append(F)
