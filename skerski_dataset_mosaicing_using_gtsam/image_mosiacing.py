@@ -121,7 +121,7 @@ class ImageMosiacking:
 
             # Determine the grid size for displaying images
             num_images = len(self.images)
-            cols = 3  # You can adjust the number of columns based on preference
+            cols = 3
             rows = math.ceil(num_images / cols)
 
         # Create a figure and a grid of subplots
@@ -134,7 +134,7 @@ class ImageMosiacking:
         for i, image in enumerate(self.images):
             # Convert BGR to RGB for display in Matplotlib
             axes[i].imshow(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
-            axes[i].axis('off')  # Turn off axis for a cleaner look
+            axes[i].axis('off')
 
         # Turn off any unused axes (if the grid is larger than the number of images)
         for j in range(i + 1, len(axes)):
