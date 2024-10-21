@@ -226,14 +226,15 @@ class ImageRegistration:
 
         return F, inlier_matches
 
-    def drawlines(self, first_index, second_index, lines, pts1, pts2):
+    def drawlines(self, first_index, second_index, lines1, lines2, pts1, pts2):
         """
         Draw epipolar line on image given by first_index.
 
         Args:
             first_index (int): Index of the first image in self.images.
             second_index (int): Index of the second image in self.images.
-            lines (numpy.ndarray): Epipolar lines.
+            lines1 (numpy.ndarray): Epipolar lines in the first image.
+            lines2 (numpy.ndarray): Epipolar lines in the second image.
             pts1 (numpy.ndarray): Keypoints in the first image.
             pts2 (numpy.ndarray): Corresponding keypoints in the second image.
 
@@ -246,28 +247,42 @@ class ImageRegistration:
         # Get image dimensions
         _, cols = img1.shape[:2]
 
-        for line, pt_in_img1, pt_in_img2 in zip(lines, pts1, pts2):
+        for line1, line2, pt_in_img1, pt_in_img2 in zip(lines1, lines2, pts1, pts2):
             color = tuple(np.random.randint(0, 255, 3).tolist())
 
+            # -------------------------- Line on Image 1 -------------------------
             # Calculate the endpoints of the epipolar line
             # Get the y intercept.
-            x0, y0 = map(int, [0, -line[2] / line[1]])
-            # Get the y coordinate when the line hits the last column (last x.)
-            x1, y1 = map(int, [cols, -(line[2] + line[0] * cols) /line[1]])
+            x0, y0 = map(int, [0, -line1[2] / line1[1]])
+            # Get the y coordinate when the line1 hits the last column (last x.)
+            x1, y1 = map(int, [cols, -(line1[2] + line1[0] * cols) /line1[1]])
 
             # Draw the epipolar line on img1
             img1 = cv2.line(img1, (x0, y0), (x1, y1), color, 3)
 
             pt_in_img1 = tuple(map(int, pt_in_img1.ravel()))
-            pt_in_img2 = tuple(map(int, pt_in_img2.ravel()))
 
             # Draw circles for the keypoints
             img1 = cv2.circle(img1, pt_in_img1, 10, color, -1)
+
+            # ---------------------------- Line on Image 2 ------------------------
+            # Calculate the endpoints of the epipolar line
+            # Get the y intercept.
+            x0, y0 = map(int, [0, -line2[2] / line2[1]])
+            # Get the y coordinate when the line2 hits the last column (last x.)
+            x1, y1 = map(int, [cols, -(line2[2] + line2[0] * cols) /line2[1]])
+
+            # Draw the epipolar line on img2
+            img2 = cv2.line(img2, (x0, y0), (x1, y1), color, 3)
+
+            pt_in_img2 = tuple(map(int, pt_in_img2.ravel()))
+
+            # Draw circles for the keypoints
             img2 = cv2.circle(img2, pt_in_img2, 10, color, -1)
 
         return img1, img2
 
-    def draw_epipolar_lines(self, first_index, second_index, inlier_matches, F):
+    def compute_and_draw_epipolar_lines(self, first_index, second_index, inlier_matches, F):
         """
         Visualizes epipolar lines between two images.
 
@@ -289,14 +304,13 @@ class ImageRegistration:
         lines2 = lines2.reshape(-1, 3)
 
         # Draw epilines and points
-        img1, img2 = self.drawlines(first_index, second_index, lines1, pts1, pts2)
-        img3, img4 = self.drawlines(second_index, first_index, lines2, pts2, pts1)
+        img1, img2 = self.drawlines(first_index, second_index, lines1, lines2, pts1, pts2)
 
         # Display results
         plt.figure(figsize=(12, 6))
         plt.subplot(121), plt.imshow(cv2.cvtColor(img1, cv2.COLOR_BGR2RGB))
         plt.title(f'Epipolar lines on image {first_index + 1}')
-        plt.subplot(122), plt.imshow(cv2.cvtColor(img3, cv2.COLOR_BGR2RGB))
+        plt.subplot(122), plt.imshow(cv2.cvtColor(img2, cv2.COLOR_BGR2RGB))
         plt.title(f'Epipolar lines on image {second_index + 1}')
         plt.show()
 
@@ -323,5 +337,5 @@ class ImageRegistration:
             self.fundamental_matrices.append(F)
 
             if self.visualize_epipolar_lines:
-                # Visualize epipolar lines
-                self.draw_epipolar_lines(i, i+1, inlier_matches, F)
+                # Compute and Visualize epipolar lines
+                self.compute_and_draw_epipolar_lines(i, i+1, inlier_matches, F)
