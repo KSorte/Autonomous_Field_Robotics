@@ -17,8 +17,7 @@ class ImageRegistration:
                  sift_contrastThreshold = 0.04,
                  sift_edgeThreshold = 10,
                  sift_sigma = 1.6,
-                 ransac_reproj_thres = 5.0,
-                 min_inliers = 25):
+                 ransac_reproj_thres = 5.0):
         """
         Initializes the ImageRegistration class with placeholder values.
         """
@@ -27,6 +26,7 @@ class ImageRegistration:
         # Image directory
         self.image_directories = image_directories
 
+        # SIFT
         self.sift = cv2.SIFT.create(nOctaveLayers = sift_nOctaveLayers,
                                     contrastThreshold=sift_contrastThreshold,
                                     edgeThreshold = sift_edgeThreshold,
@@ -50,7 +50,8 @@ class ImageRegistration:
             # Return inf if no number is found
             return int(match.group()) if match else float('inf')
 
-        self.images = []  # Initialize images list
+        # Initialize images list
+        self.images = []
 
         # Iterate through each subdirectory in the list
         for directory in self.image_directories:
@@ -84,6 +85,7 @@ class ImageRegistration:
 
             # Determine the grid size for displaying images
             num_images = len(self.images)
+            # Number of columns in the grid.
             cols = 4
             rows = math.ceil(num_images / cols)
 
@@ -153,10 +155,11 @@ class ImageRegistration:
                 gray_image, keypoints, None,
                 flags=cv2.DRAW_MATCHES_FLAGS_DRAW_RICH_KEYPOINTS)
 
-            # Plot the image with keypoints in the grid
-            axes[i].imshow(image_with_keypoints, cmap='gray')
-            axes[i].set_title(f'Image {i+1} with Keypoints')
-            axes[i].axis('off')
+            if self.visualize_features:
+                # Plot the image with keypoints in the grid
+                axes[i].imshow(image_with_keypoints, cmap='gray')
+                axes[i].set_title(f'Image {i+1} with Keypoints')
+                axes[i].axis('off')
 
         # Hide any remaining empty subplots
         for j in range(i+1, len(axes)):
@@ -168,23 +171,17 @@ class ImageRegistration:
 
     def match_features(self, index1, index2):
         """
-        Detects SIFT keypoints and descriptors for each image in `self.images` and stores them
-        in `self.keypoints` and `self.descriptors`. Each image is converted to grayscale to
-        optimize feature detection. The method also visualizes and plots the keypoints on the
-        images using Matplotlib.
+        Finds good matches from the keypoints and descripters.
 
-        Attributes:
-            self.keypoints (list): List of keypoints for each image.
-            self.descriptors (list): List of descriptors for each image.
+        Utilizes a brute force approach to find potential matches and
+        reject matches if the second best match is too close.
 
-        Procedure:
-            1. Convert each image to grayscale.
-            2. Detect keypoints and descriptors using SIFT.
-            3. Append results to `self.keypoints` and `self.descriptors`.
-            4. Visualize keypoints using `cv2.drawKeypoints()` and Matplotlib.
+        Args:
+            index1 (int): Index of the first image from `self.images`.
+            index2 (int): Index of the second image from `self.images`.
 
-        Example:
-            >>> obj.get_features()
+        Returns:
+            good_matches (list of cv2.DMatch): List of good matches between the two images.
         """
         brute_force_matcher = cv2.BFMatcher()
 
@@ -200,6 +197,20 @@ class ImageRegistration:
 
 
     def compute_fundamental_matrix(self, first_index, second_index, good_matches):
+        """
+        Computes the fundamental matrix between two images using matched keypoints.
+
+        The function takes matched keypoints between two images, and applies RANSAC
+        to compute the fundamental matrix.
+
+        Args:
+            first_index (int): Index of the source image in `self.images`.
+            second_index (int): Index of the destination image in `self.images`.
+            good_matches (list of cv2.DMatch): List of good matches between the two images.
+
+        Returns:
+            numpy.ndarray: The computed fundamental matrix (3x3).
+        """
         # Get coordinates of the matched keypoints from both images.
         first_pts = np.float32([self.keypoints[first_index][m[0].queryIdx].pt for m in good_matches]).reshape(-1, 1, 2)
         second_pts = np.float32([self.keypoints[second_index][m[0].trainIdx].pt for m in good_matches]).reshape(-1, 1, 2)
@@ -212,13 +223,12 @@ class ImageRegistration:
         # Separate good matches into inliers and outliers based on the mask.
         matches_mask = mask.ravel().tolist()
         inlier_matches = [good_matches[i] for i in range(len(good_matches)) if matches_mask[i]]
-        outlier_matches = [good_matches[i] for i in range(len(good_matches)) if not matches_mask[i]]
 
         return F, inlier_matches
 
     def drawlines(self, first_index, second_index, lines, pts1, pts2):
         """
-        Draw epipolar lines on images.
+        Draw epipolar line on image given by first_index.
 
         Args:
             first_index (int): Index of the first image in self.images.
@@ -234,27 +244,30 @@ class ImageRegistration:
         img2 = self.images[second_index].copy()
 
         # Get image dimensions
-        r, c = img1.shape[:2]
+        _, cols = img1.shape[:2]
 
-        for r, pt1, pt2 in zip(lines, pts1, pts2):
+        for line, pt_in_img1, pt_in_img2 in zip(lines, pts1, pts2):
             color = tuple(np.random.randint(0, 255, 3).tolist())
 
             # Calculate the endpoints of the epipolar line
-            x0, y0 = map(int, [0, -r[2] / r[1]])
-            x1, y1 = map(int, [c, -(r[2] + r[0] * c) / r[1]])
+            # Get the y intercept.
+            x0, y0 = map(int, [0, -line[2] / line[1]])
+            # Get the y coordinate when the line hits the last column (last x.)
+            x1, y1 = map(int, [cols, -(line[2] + line[0] * cols) /line[1]])
 
             # Draw the epipolar line on img1
             img1 = cv2.line(img1, (x0, y0), (x1, y1), color, 3)
 
+            pt_in_img1 = tuple(map(int, pt_in_img1.ravel()))
+            pt_in_img2 = tuple(map(int, pt_in_img2.ravel()))
+
             # Draw circles for the keypoints
-            pt1 = tuple(map(int, pt1.ravel()))
-            pt2 = tuple(map(int, pt2.ravel()))
-            img1 = cv2.circle(img1, pt1, 10, color, -1)
-            img2 = cv2.circle(img2, pt2, 10, color, -1)
+            img1 = cv2.circle(img1, pt_in_img1, 10, color, -1)
+            img2 = cv2.circle(img2, pt_in_img2, 10, color, -1)
 
         return img1, img2
 
-    def draw_epipolar_lines(self, first_index, second_index):
+    def draw_epipolar_lines(self, first_index, second_index, inlier_matches, F):
         """
         Visualizes epipolar lines between two images.
 
@@ -262,11 +275,6 @@ class ImageRegistration:
             first_index (int): Index of the first image in self.images.
             second_index (int): Index of the second image in self.images.
         """
-        # Get matches
-        good_matches = self.match_features(first_index, second_index)
-
-        # Compute fundamental matrix
-        F, inlier_matches = self.compute_fundamental_matrix(first_index, second_index, good_matches)
 
         # Get coordinates of the matched keypoints from both images
         pts1 = np.float32([self.keypoints[first_index][m[0].queryIdx].pt for m in inlier_matches]).reshape(-1, 1, 2)
@@ -287,9 +295,9 @@ class ImageRegistration:
         # Display results
         plt.figure(figsize=(12, 6))
         plt.subplot(121), plt.imshow(cv2.cvtColor(img1, cv2.COLOR_BGR2RGB))
-        plt.title(f'Epipolar lines on image {first_index}')
+        plt.title(f'Epipolar lines on image {first_index + 1}')
         plt.subplot(122), plt.imshow(cv2.cvtColor(img3, cv2.COLOR_BGR2RGB))
-        plt.title(f'Epipolar lines on image {second_index}')
+        plt.title(f'Epipolar lines on image {second_index + 1}')
         plt.show()
 
     def get_matches_and_fundamental_matrices(self):
@@ -301,7 +309,7 @@ class ImageRegistration:
 
         Attributes:
             self.image_feature_matches (list): Stores lists of good matches between consecutive images.
-            self.homographies (list): Stores the homographies computed between consecutive image pairs.
+            self.fundamental_matrices (list): Stores the homographies computed between consecutive image pairs.
         """
         self.fundamental_matrices = []
 
@@ -316,4 +324,4 @@ class ImageRegistration:
 
             if self.visualize_epipolar_lines:
                 # Visualize epipolar lines
-                self.draw_epipolar_lines(i, i+1)
+                self.draw_epipolar_lines(i, i+1, inlier_matches, F)
