@@ -121,7 +121,7 @@ class ImageMosiacking:
 
             # Determine the grid size for displaying images
             num_images = len(self.images)
-            cols = 3  # You can adjust the number of columns based on preference
+            cols = 3
             rows = math.ceil(num_images / cols)
 
         # Create a figure and a grid of subplots
@@ -134,7 +134,7 @@ class ImageMosiacking:
         for i, image in enumerate(self.images):
             # Convert BGR to RGB for display in Matplotlib
             axes[i].imshow(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
-            axes[i].axis('off')  # Turn off axis for a cleaner look
+            axes[i].axis('off')
 
         # Turn off any unused axes (if the grid is larger than the number of images)
         for j in range(i + 1, len(axes)):
@@ -187,23 +187,17 @@ class ImageMosiacking:
 
     def match_features(self, index1, index2):
         """
-        Detects SIFT keypoints and descriptors for each image in `self.images` and stores them
-        in `self.keypoints` and `self.descriptors`. Each image is converted to grayscale to
-        optimize feature detection. The method also visualizes and plots the keypoints on the
-        images using Matplotlib.
+        Finds good matches from the keypoints and descripters.
 
-        Attributes:
-            self.keypoints (list): List of keypoints for each image.
-            self.descriptors (list): List of descriptors for each image.
+        Utilizes a brute force approach to find potential matches and
+        reject matches if the second best match is too close.
 
-        Procedure:
-            1. Convert each image to grayscale.
-            2. Detect keypoints and descriptors using SIFT.
-            3. Append results to `self.keypoints` and `self.descriptors`.
-            4. Visualize keypoints using `cv2.drawKeypoints()` and Matplotlib.
+        Args:
+            index1 (int): Index of the first image from `self.images`.
+            index2 (int): Index of the second image from `self.images`.
 
-        Example:
-            >>> obj.get_features()
+        Returns:
+            good_matches (list of cv2.DMatch): List of good matches between the two images.
         """
         brute_force_matcher = cv2.BFMatcher()
 
@@ -274,12 +268,6 @@ class ImageMosiacking:
 
         Returns:
             numpy.ndarray: The computed homography matrix (3x3).
-
-        Procedure:
-            1. Extracts the matched keypoints' coordinates from both source and destination images.
-            2. Normalizes the coordinates to the range [-1, 1].
-            3. Computes the homography using RANSAC to filter out outliers.
-            4. Applies normalization transformation to the homography.
         """
 
         # Get coordinates of the matched keypoints from both images.
