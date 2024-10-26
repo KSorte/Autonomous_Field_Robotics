@@ -33,14 +33,22 @@ class ImageRegistration:
                                     sigma = sift_sigma)
 
 
+        self.focal_length = 10
         self.visualize_features = visualize_features
         self.visualize_epipolar_lines = visualize_epipolar_lines
         self.ransac_reproj_thres = ransac_reproj_thres
+
+    def set_camera_intrinsics(self, f, px, py):
+        self.camera_intrinsics = np.array([[f, 0, px],
+                          [0, f, py],
+                          [0, 0, 1]])
 
     def get_images_for_registration(self):
         """
         Loads all images from multiple subdirectories for mosaicking and displays them.
         Images are read in numerical order based on their filenames.
+
+        Sets the camera intrinsics.
         """
 
         # Function to extract numbers from filenames for numerical sorting
@@ -99,7 +107,7 @@ class ImageRegistration:
         for i, image in enumerate(self.images):
             # Convert BGR to RGB for display in Matplotlib
             axes[i].imshow(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
-            axes[i].axis('off')  # Turn off axis for a cleaner look
+            axes[i].axis('off')
 
         # Turn off any unused axes (if the grid is larger than the number of images)
         for j in range(i + 1, len(axes)):
@@ -108,6 +116,12 @@ class ImageRegistration:
         # Adjust layout to avoid overlap
         plt.tight_layout()
         plt.show()
+
+        # Get image height and width
+        num_rows, num_cols = self.images[0].shape[:2]
+
+        # Set camera intrinsics.
+        self.set_camera_intrinsics(self.focal_length, num_cols/2, num_rows/2)
 
     def get_features(self):
         """
@@ -133,10 +147,11 @@ class ImageRegistration:
         # Calculate number of rows needed
         num_rows = (num_images + num_cols - 1) // num_cols
 
-        # Create a Matplotlib figure
-        fig, axes = plt.subplots(num_rows, num_cols, figsize=(15, 5*num_rows))
-        # Flatten the grid into a 1D array for easy access
-        axes = axes.ravel()
+        if self.visualize_features:
+            # Create a Matplotlib figure
+            fig, axes = plt.subplots(num_rows, num_cols, figsize=(15, 5*num_rows))
+            # Flatten the grid into a 1D array for easy access
+            axes = axes.ravel()
 
         for i, image in enumerate(self.images):
 
@@ -161,13 +176,14 @@ class ImageRegistration:
                 axes[i].set_title(f'Image {i+1} with Keypoints')
                 axes[i].axis('off')
 
-        # Hide any remaining empty subplots
-        for j in range(i+1, len(axes)):
-            axes[j].axis('off')
+        if self.visualize_features:
+            # Hide any remaining empty subplots
+            for j in range(i+1, len(axes)):
+                axes[j].axis('off')
 
-        # Show the grid of images
-        plt.tight_layout()
-        plt.show()
+            # Show the grid of images
+            plt.tight_layout()
+            plt.show()
 
     def match_features(self, index1, index2):
         """
@@ -225,6 +241,9 @@ class ImageRegistration:
         inlier_matches = [good_matches[i] for i in range(len(good_matches)) if matches_mask[i]]
 
         return F, inlier_matches
+
+    def get_essential_matrix(self, F):
+        return self.camera_intrinsics.T@F@self.camera_intrinsics
 
     def drawlines(self, first_index, second_index, lines1, lines2, pts1, pts2):
         """
@@ -326,6 +345,7 @@ class ImageRegistration:
             self.fundamental_matrices (list): Stores the homographies computed between consecutive image pairs.
         """
         self.fundamental_matrices = []
+        self.essential_matrices = []
 
         for i in range(len(self.images) - 1):
             # Get matches for i and i + 1 th image
@@ -333,8 +353,12 @@ class ImageRegistration:
             # Get Fundamental Matrix and inlier matches.
             F, inlier_matches = self.compute_fundamental_matrix(i, i+1, good_matches=good_matches)
 
-            # Store homography and matches.
+            # Compute essential matrix.
+            E = self.get_essential_matrix(F)
+
+            # Store F and E.
             self.fundamental_matrices.append(F)
+            self.essential_matrices.append(E)
 
             if self.visualize_epipolar_lines:
                 # Compute and Visualize epipolar lines
