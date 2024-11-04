@@ -33,14 +33,22 @@ class ImageRegistration:
                                     sigma = sift_sigma)
 
 
+        self.focal_length = 2000
         self.visualize_features = visualize_features
         self.visualize_epipolar_lines = visualize_epipolar_lines
         self.ransac_reproj_thres = ransac_reproj_thres
+
+    def set_camera_intrinsics(self, f, px, py):
+        self.camera_intrinsics = np.array([[f, 0, px],
+                          [0, f, py],
+                          [0, 0, 1]])
 
     def get_images_for_registration(self):
         """
         Loads all images from multiple subdirectories for mosaicking and displays them.
         Images are read in numerical order based on their filenames.
+
+        Sets the camera intrinsics.
         """
 
         # Function to extract numbers from filenames for numerical sorting
@@ -99,7 +107,7 @@ class ImageRegistration:
         for i, image in enumerate(self.images):
             # Convert BGR to RGB for display in Matplotlib
             axes[i].imshow(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
-            axes[i].axis('off')  # Turn off axis for a cleaner look
+            axes[i].axis('off')
 
         # Turn off any unused axes (if the grid is larger than the number of images)
         for j in range(i + 1, len(axes)):
@@ -108,6 +116,12 @@ class ImageRegistration:
         # Adjust layout to avoid overlap
         plt.tight_layout()
         plt.show()
+
+        # Get image height and width
+        num_rows, num_cols = self.images[0].shape[:2]
+
+        # Set camera intrinsics.
+        self.set_camera_intrinsics(self.focal_length, num_cols/2, num_rows/2)
 
     def get_features(self):
         """
@@ -133,10 +147,11 @@ class ImageRegistration:
         # Calculate number of rows needed
         num_rows = (num_images + num_cols - 1) // num_cols
 
-        # Create a Matplotlib figure
-        fig, axes = plt.subplots(num_rows, num_cols, figsize=(15, 5*num_rows))
-        # Flatten the grid into a 1D array for easy access
-        axes = axes.ravel()
+        if self.visualize_features:
+            # Create a Matplotlib figure
+            fig, axes = plt.subplots(num_rows, num_cols, figsize=(15, 5*num_rows))
+            # Flatten the grid into a 1D array for easy access
+            axes = axes.ravel()
 
         for i, image in enumerate(self.images):
 
@@ -161,13 +176,14 @@ class ImageRegistration:
                 axes[i].set_title(f'Image {i+1} with Keypoints')
                 axes[i].axis('off')
 
-        # Hide any remaining empty subplots
-        for j in range(i+1, len(axes)):
-            axes[j].axis('off')
+        if self.visualize_features:
+            # Hide any remaining empty subplots
+            for j in range(i+1, len(axes)):
+                axes[j].axis('off')
 
-        # Show the grid of images
-        plt.tight_layout()
-        plt.show()
+            # Show the grid of images
+            plt.tight_layout()
+            plt.show()
 
     def match_features(self, index1, index2):
         """
@@ -217,14 +233,17 @@ class ImageRegistration:
         F, mask = cv2.findFundamentalMat(first_pts, second_pts, cv2.FM_RANSAC, ransacReprojThreshold=self.ransac_reproj_thres)
 
         # Select only inlier points
-        first_pts = first_pts[mask.ravel()==1]
-        second_pts = second_pts[mask.ravel()==1]
+        inlier_points1 = first_pts[mask.ravel()==1]
+        inlier_points2 = second_pts[mask.ravel()==1]
 
         # Separate good matches into inliers and outliers based on the mask.
         matches_mask = mask.ravel().tolist()
         inlier_matches = [good_matches[i] for i in range(len(good_matches)) if matches_mask[i]]
 
-        return F, inlier_matches
+        return F, inlier_points1, inlier_points2, inlier_matches
+
+    def get_essential_matrix(self, F):
+        return self.camera_intrinsics.T@F@self.camera_intrinsics
 
     def drawlines(self, first_index, second_index, lines1, lines2, pts1, pts2):
         """
@@ -314,28 +333,125 @@ class ImageRegistration:
         plt.title(f'Epipolar lines on image {second_index + 1}')
         plt.show()
 
-    def get_matches_and_fundamental_matrices(self):
+    # TODO(KSorte): Split this function up.
+    def process_epipolar_geometry_and_recover_relative_poses(self):
         """
-        Computes feature matches and fundamental matrices between consecutive images in a sequence.
+        Computes feature matches, fundamental matrices, essential matrices, and relative poses between consecutive images in a sequence.
 
-        Matches keypoints between consecutive images, visualizes the matches, and computes the
-        fundamental matrix for each image pair using RANSAC.
+        Matches keypoints between consecutive images, visualizes the matches, computes the fundamental
+        matrix for each image pair using RANSAC, computes the essential matrix, and retrieves the relative pose.
 
         Attributes:
             self.image_feature_matches (list): Stores lists of good matches between consecutive images.
-            self.fundamental_matrices (list): Stores the homographies computed between consecutive image pairs.
+            self.fundamental_matrices (list): Stores the fundamental matrices computed between consecutive image pairs.
+            self.essential_matrices (list): Stores the essential matrices computed between consecutive image pairs.
+            self.relative_poses (list): Stores the relative poses (rotation and translation) for consecutive image pairs.
         """
         self.fundamental_matrices = []
+        self.essential_matrices = []
+        self.relative_poses = []
 
         for i in range(len(self.images) - 1):
             # Get matches for i and i + 1 th image
             good_matches = self.match_features(i, i+1)
             # Get Fundamental Matrix and inlier matches.
-            F, inlier_matches = self.compute_fundamental_matrix(i, i+1, good_matches=good_matches)
+            F, inlier_points1, inlier_points2, inlier_matches = self.compute_fundamental_matrix(i, i+1, good_matches=good_matches)
 
-            # Store homography and matches.
+            # TODO(KSorte): Add a condition that min 5 inliers needed.
+            # Compute essential matrix.
+            E = self.get_essential_matrix(F)
+
+            _, R, T, _ = cv2.recoverPose(E, inlier_points1, inlier_points2, self.camera_intrinsics)
+            self.relative_poses.append((R, T))
+            # Store F and E
             self.fundamental_matrices.append(F)
+            self.essential_matrices.append(E)
 
             if self.visualize_epipolar_lines:
                 # Compute and Visualize epipolar lines
                 self.compute_and_draw_epipolar_lines(i, i+1, inlier_matches, F)
+
+
+    def compute_absolute_poses(self):
+        """
+        Computes absolute poses (4x4 transformation matrices) for each image in the sequence
+        from relative poses (stored as tuples) between consecutive images.
+
+        Assumes the first image is at the origin with an identity pose.
+
+        Attributes:
+            self.absolute_poses (list): Stores the 4x4 transformation matrices for each image in the sequence.
+        """
+        # Initialize the absolute poses list
+        self.absolute_poses = []
+
+        # Start with the first pose as the identity matrix (4x4)
+        initial_pose = np.eye(4)
+        self.absolute_poses.append(initial_pose)
+
+        # Iterate through relative poses to compute the absolute poses
+        for i, (relative_rotation, relative_translation) in enumerate(self.relative_poses):
+            # Retrieve the previous absolute pose
+            prev_pose = self.absolute_poses[i]
+
+            # Construct the 4x4 transformation matrix for the current relative pose
+            relative_pose = np.eye(4)
+            relative_pose[:3, :3] = relative_rotation
+            relative_pose[:3, 3] = relative_translation.flatten()
+
+            # Compute the new absolute pose by chaining the previous absolute pose and the relative pose
+            current_pose = prev_pose @ relative_pose
+
+            # Store the absolute pose for the current image
+            self.absolute_poses.append(current_pose)
+
+
+    def plot_camera_poses(self, axis_length=0.1):
+        """
+        Plots all camera poses in 3D.
+
+        Each pose is represented by a coordinate frame with colored axes indicating orientation.
+
+        Parameters:
+            axis_length (float): Length of the axis lines for each camera frame.
+        """
+        fig = plt.figure()
+        ax = fig.add_subplot(111, projection='3d')
+
+        # Set plot limits (adjust as needed for your data)
+        ax.set_xlim(-10, 10)
+        ax.set_ylim(-10, 10)
+        ax.set_zlim(-10, 10)
+
+        ax.set_xlabel("X")
+        ax.set_ylabel("Y")
+        ax.set_zlabel("Z")
+
+        # Plot each camera pose
+        for i, pose in enumerate(self.absolute_poses):
+
+            # Extract rotation and translation from the 4x4 pose matrix
+            R = pose[:3, :3]
+            t = pose[:3, 3]
+
+            # Define the origin of the camera in world coordinates
+            origin = t
+
+            # Define the axes of the camera frame in world coordinates
+            x_axis = origin + axis_length * R[:, 0]  # X-axis in red
+            y_axis = origin + axis_length * R[:, 1]  # Y-axis in green
+            z_axis = origin + axis_length * R[:, 2]  # Z-axis in blue
+
+            # Plot the camera origin
+            ax.scatter(*origin, color="black", s=20)
+
+            # # Plot the axes of the camera
+            ax.plot([origin[0], x_axis[0]], [origin[1], x_axis[1]], [origin[2], x_axis[2]], color='r')
+            ax.plot([origin[0], y_axis[0]], [origin[1], y_axis[1]], [origin[2], y_axis[2]], color='g')
+            ax.plot([origin[0], z_axis[0]], [origin[1], z_axis[1]], [origin[2], z_axis[2]], color='b')
+
+            # Optional: Label the camera frame
+            ax.text(origin[0], origin[1], origin[2], f"Camera {i+1}", color="black")
+
+        # Show the plot
+        plt.show()
