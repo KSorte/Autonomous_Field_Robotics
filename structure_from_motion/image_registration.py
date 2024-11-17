@@ -212,6 +212,7 @@ class ImageRegistration:
         return good_matches
 
 
+    # TODO(KSorte): Implement an iterative 8 point algorithm to compute fundamental matrix.
     def compute_fundamental_matrix(self, first_index, second_index, good_matches):
         """
         Computes the fundamental matrix between two images using matched keypoints.
@@ -237,13 +238,17 @@ class ImageRegistration:
         inlier_points2 = second_pts[mask.ravel()==1]
 
         # Separate good matches into inliers and outliers based on the mask.
-        matches_mask = mask.ravel().tolist()
-        inlier_matches = [good_matches[i] for i in range(len(good_matches)) if matches_mask[i]]
+        inlier_matches = [good_matches[i] for i in range(len(good_matches)) if mask[i]]
 
+        # TODO(KSorte): Handle this return tuple better.
         return F, inlier_points1, inlier_points2, inlier_matches
 
     def get_essential_matrix(self, F):
         return self.camera_intrinsics.T@F@self.camera_intrinsics
+
+    def get_camera_matrix(self, pose):
+        P = self.camera_intrinsics@pose[0:3, 0:4]
+        return P
 
     def drawlines(self, first_index, second_index, lines1, lines2, pts1, pts2):
         """
@@ -350,6 +355,7 @@ class ImageRegistration:
         self.fundamental_matrices = []
         self.essential_matrices = []
         self.relative_poses = []
+        self.inlier_points = []
 
         for i in range(len(self.images) - 1):
             # Get matches for i and i + 1 th image
@@ -361,11 +367,18 @@ class ImageRegistration:
             # Compute essential matrix.
             E = self.get_essential_matrix(F)
 
-            _, R, T, _ = cv2.recoverPose(E, inlier_points1, inlier_points2, self.camera_intrinsics)
+            _, R, T, mask = cv2.recoverPose(E, inlier_points1, inlier_points2, self.camera_intrinsics)
             self.relative_poses.append((R, T))
             # Store F and E
             self.fundamental_matrices.append(F)
             self.essential_matrices.append(E)
+            # print(f"Mask at {i} and {i+1} is {mask}")
+
+            inlier_points1 = inlier_points1[mask == 255].reshape(-1, 1, 2)
+            inlier_points2 = inlier_points2[mask == 255].reshape(-1, 1, 2)
+            if inlier_points1.shape[0] == 0 or inlier_points2.shape[0] == 0:
+                print("empty inliers")
+            self.inlier_points.append((inlier_points1, inlier_points2))
 
             if self.visualize_epipolar_lines:
                 # Compute and Visualize epipolar lines
@@ -400,7 +413,9 @@ class ImageRegistration:
             relative_pose[:3, 3] = relative_translation.flatten()
 
             # Compute the new absolute pose by chaining the previous absolute pose and the relative pose
-            current_pose = prev_pose @ relative_pose
+            # TODO(KSorte): Explore this formulation.
+            # current_pose = prev_pose @ relative_pose
+            current_pose = relative_pose @ prev_pose
 
             # Store the absolute pose for the current image
             self.absolute_poses.append(current_pose)
@@ -454,4 +469,56 @@ class ImageRegistration:
             ax.text(origin[0], origin[1], origin[2], f"Camera {i+1}", color="black")
 
         # Show the plot
+        plt.show()
+
+    def triangulate_landmarks(self):
+        self.world_points_3D = []
+        for i in range(len(self.images) - 1):
+            # Camera matrices
+            P1 = self.get_camera_matrix(self.absolute_poses[i])
+            P2 = self.get_camera_matrix(self.absolute_poses[i+1])
+
+            # Inlier points
+            points_1 = self.inlier_points[i][0]
+            points_2 = self.inlier_points[i][1]
+            print("Points 1 shape", points_1.shape)
+
+            # Homogeneous 4D world points
+            world_points_3D = cv2.triangulatePoints(P1, P2, points_1, points_2)
+
+            # Convert to Euclidean coordinates by dividing by the 4th coordinate.
+            world_points_3D[:3, :] = world_points_3D[:3, :]/world_points_3D[3, :]
+
+            # TODO (KSorte): Review this transformation of landmarks into the world frame.
+            # Compute the transform from the camera frame to world frame.
+            T_camera_to_world = np.linalg.inv(self.absolute_poses[i])
+
+            # Convert the homogeneous landmark coordinates from the first camera frame to the world frame.
+            world_points_3D = T_camera_to_world@world_points_3D
+
+            self.world_points_3D.append(world_points_3D)
+
+    def plot_points_3d(self):
+        """
+        Simple 3D scatter plot of triangulated points.
+
+        Parameters:
+        world_points_3D: list of numpy.ndarray
+            List of 4xN arrays of homogeneous 3D points from triangulation
+        """
+        # Create 3D plot
+        fig = plt.figure()
+        ax = fig.add_subplot(111, projection='3d')
+
+        # Plot points from each image pair
+        for points_4d in self.world_points_3D:
+            points_3d = points_4d[:3]
+
+            # Plot the points
+            ax.scatter(points_3d[0], points_3d[1], points_3d[2],
+                    c='blue', marker='.', s=1)
+
+        ax.set_xlabel('X')
+        ax.set_ylabel('Y')
+        ax.set_zlabel('Z')
         plt.show()
