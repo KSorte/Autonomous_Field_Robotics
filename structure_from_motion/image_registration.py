@@ -413,7 +413,9 @@ class ImageRegistration:
             relative_pose[:3, 3] = relative_translation.flatten()
 
             # Compute the new absolute pose by chaining the previous absolute pose and the relative pose
-            current_pose = prev_pose @ relative_pose
+            # TODO(KSorte): Explore this formulation.
+            # current_pose = prev_pose @ relative_pose
+            current_pose = relative_pose @ prev_pose
 
             # Store the absolute pose for the current image
             self.absolute_poses.append(current_pose)
@@ -486,6 +488,13 @@ class ImageRegistration:
 
             # Convert to Euclidean coordinates by dividing by the 4th coordinate.
             world_points_3D[:3, :] = world_points_3D[:3, :]/world_points_3D[3, :]
+
+            # TODO (KSorte): Review this transformation of landmarks into the world frame.
+            # Compute the transform from the camera frame to world frame.
+            T_camera_to_world = np.linalg.inv(self.absolute_poses[i])
+
+            # Convert the homogeneous landmark coordinates from the first camera frame to the world frame.
+            world_points_3D = T_camera_to_world@world_points_3D
 
             self.world_points_3D.append(world_points_3D)
 
