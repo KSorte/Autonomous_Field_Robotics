@@ -139,6 +139,7 @@ class ImageRegistration:
         """
         self.keypoints = []
         self.descriptors = []
+        self.object_index_list = []
 
         # Set up the grid layout for plotting
         num_images = len(self.images)
@@ -164,6 +165,10 @@ class ImageRegistration:
 
             self.keypoints.append(keypoints)
             self.descriptors.append(descriptors)
+
+            # Create object index list for the image.
+            # NOTE: Refered from ZZ's code.
+            self.object_index_list.append(np.full(len(keypoints), -1, int))
 
             # Draw the keypoints on the grayscale image
             image_with_keypoints = cv2.drawKeypoints(
@@ -205,15 +210,20 @@ class ImageRegistration:
         matches = brute_force_matcher.knnMatch(self.descriptors[index1], self.descriptors[index2], k=2)
 
         good_matches = []
+        index1_keypoint_index_list = []
+        index2_keypoint_index_list = []
         for m,n in matches:
             if m.distance < 0.8*n.distance:
                 good_matches.append([m])
+                # Store the indices of the points in good matches
+                index1_keypoint_index_list.append(m.queryIdx)
+                index2_keypoint_index_list.append(m.trainIdx)
 
-        return good_matches
+        return good_matches, np.array(index1_keypoint_index_list), np.array(index2_keypoint_index_list)
 
 
     # TODO(KSorte): Implement an iterative 8 point algorithm to compute fundamental matrix.
-    def compute_fundamental_matrix(self, first_index, second_index, good_matches):
+    def compute_fundamental_matrix(self, first_index, second_index, good_matches, first_indices, second_indices):
         """
         Computes the fundamental matrix between two images using matched keypoints.
 
@@ -231,17 +241,21 @@ class ImageRegistration:
         # Get coordinates of the matched keypoints from both images.
         first_pts = np.float32([self.keypoints[first_index][m[0].queryIdx].pt for m in good_matches]).reshape(-1, 1, 2)
         second_pts = np.float32([self.keypoints[second_index][m[0].trainIdx].pt for m in good_matches]).reshape(-1, 1, 2)
-        F, mask = cv2.findFundamentalMat(first_pts, second_pts, cv2.FM_RANSAC, ransacReprojThreshold=self.ransac_reproj_thres)
 
+        F, mask = cv2.findFundamentalMat(first_pts, second_pts, cv2.FM_RANSAC, ransacReprojThreshold=self.ransac_reproj_thres)
+        # print("Mask in F", mask)
         # Select only inlier points
         inlier_points1 = first_pts[mask.ravel()==1]
         inlier_points2 = second_pts[mask.ravel()==1]
+
+        first_indices = first_indices[mask.ravel()==1]
+        second_indices = second_indices[mask.ravel()==1]
 
         # Separate good matches into inliers and outliers based on the mask.
         inlier_matches = [good_matches[i] for i in range(len(good_matches)) if mask[i]]
 
         # TODO(KSorte): Handle this return tuple better.
-        return F, inlier_points1, inlier_points2, inlier_matches
+        return F, inlier_points1, inlier_points2, inlier_matches, first_indices, second_indices
 
     def get_essential_matrix(self, F):
         return self.camera_intrinsics.T@F@self.camera_intrinsics
@@ -352,32 +366,61 @@ class ImageRegistration:
             self.essential_matrices (list): Stores the essential matrices computed between consecutive image pairs.
             self.relative_poses (list): Stores the relative poses (rotation and translation) for consecutive image pairs.
         """
-        self.fundamental_matrices = []
+
         self.essential_matrices = []
         self.relative_poses = []
         self.inlier_points = []
+        self.inlier_indices = []
 
         for i in range(len(self.images) - 1):
             # Get matches for i and i + 1 th image
-            good_matches = self.match_features(i, i+1)
+            good_matches, first_indices, second_indices = self.match_features(i, i+1)
+            # print("good matches", len(good_matches))
+
             # Get Fundamental Matrix and inlier matches.
-            F, inlier_points1, inlier_points2, inlier_matches = self.compute_fundamental_matrix(i, i+1, good_matches=good_matches)
+            F, inlier_points1, inlier_points2, inlier_matches, first_indices, second_indices = \
+                self.compute_fundamental_matrix(i, i+1, good_matches, first_indices, second_indices)
+
+            # print("inlier 1 shape after F", inlier_points1.shape)
+            # print("inlier 2 shape after F", inlier_points2.shape)
+            # print("first indices shape after F", first_indices.shape)
+            # print("second indices shape after F", second_indices.shape)
 
             # TODO(KSorte): Add a condition that min 5 inliers needed.
             # Compute essential matrix.
             E = self.get_essential_matrix(F)
 
-            _, R, T, mask = cv2.recoverPose(E, inlier_points1, inlier_points2, self.camera_intrinsics)
+            # Recover relative pose.
+            _, R, T, pose_mask = cv2.recoverPose(E, inlier_points1, inlier_points2, self.camera_intrinsics)
             self.relative_poses.append((R, T))
-            # Store F and E
-            self.fundamental_matrices.append(F)
-            self.essential_matrices.append(E)
-            # print(f"Mask at {i} and {i+1} is {mask}")
+            # print("Pose mask", pose_mask)
 
-            inlier_points1 = inlier_points1[mask == 255].reshape(-1, 1, 2)
-            inlier_points2 = inlier_points2[mask == 255].reshape(-1, 1, 2)
+            # Store E
+            self.essential_matrices.append(E)
+
+            inlier_points1 = inlier_points1[pose_mask == 255]
+            inlier_points2 = inlier_points2[pose_mask == 255]
+            pose_mask = np.squeeze(pose_mask != 0)
+
+            # print("inlier 1 shape recovering relative pose", inlier_points1.shape)
+            # print("inlier 2 shape recovering relative pose", inlier_points2.shape)
+
+            # print("Pose mask", pose_mask)
+
+            # print("pose mask shape after recovering relative pose", pose_mask.shape)
+            # print("first indices shape", first_indices.shape)
+            # print("second indices shape", second_indices.shape)
+            first_indices = first_indices[pose_mask]
+            second_indices = second_indices[pose_mask]
+
+            # print("first indices shape after applying pose mask", first_indices.shape)
+            # print("second indices shape after applying pose mask", second_indices.shape)
+
+            self.inlier_indices.append((first_indices, second_indices))
+
             if inlier_points1.shape[0] == 0 or inlier_points2.shape[0] == 0:
                 print("empty inliers")
+
             self.inlier_points.append((inlier_points1, inlier_points2))
 
             if self.visualize_epipolar_lines:
@@ -484,7 +527,7 @@ class ImageRegistration:
             print("Points 1 shape", points_1.shape)
 
             # Homogeneous 4D world points
-            world_points_3D = cv2.triangulatePoints(P1, P2, points_1, points_2)
+            world_points_3D = cv2.triangulatePoints(P1, P2, points_1.reshape(-1, 1, 2), points_2.reshape(-1, 1, 2))
 
             # Convert to Euclidean coordinates by dividing by the 4th coordinate.
             world_points_3D[:3, :] = world_points_3D[:3, :]/world_points_3D[3, :]
