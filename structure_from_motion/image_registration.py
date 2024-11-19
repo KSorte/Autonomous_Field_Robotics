@@ -257,14 +257,6 @@ class ImageRegistration:
         # TODO(KSorte): Handle this return tuple better.
         return F, inlier_points1, inlier_points2, inlier_matches, first_indices, second_indices
 
-    def get_essential_matrix(self, F):
-        return self.camera_intrinsics.T@F@self.camera_intrinsics
-
-    @staticmethod
-    def get_camera_matrix(pose, K):
-        P = K@pose[0:3, 0:4]
-        return P
-
     # TODO(KSorte): Split this function up.
     def process_epipolar_geometry_and_recover_relative_poses(self):
         """
@@ -301,7 +293,7 @@ class ImageRegistration:
 
             # TODO(KSorte): Add a condition that min 5 inliers needed.
             # Compute essential matrix.
-            E = self.get_essential_matrix(F)
+            E = ImageRegistration.get_essential_matrix(F, self.camera_intrinsics)
 
             # Recover relative pose.
             _, R, T, pose_mask = cv2.recoverPose(E, inlier_points1, inlier_points2, self.camera_intrinsics)
@@ -376,6 +368,34 @@ class ImageRegistration:
             # Store the absolute pose for the current image
             self.camera_extrinsic_poses.append(current_pose)
 
+    def triangulate_landmarks_all_views(self):
+        self.world_points_3D = []
+        for i in range(len(self.images) - 1):
+            # Inlier points
+            points_1 = self.inlier_points[i][0]
+            points_2 = self.inlier_points[i][1]
+            print("Points 1 shape", points_1.shape)
+
+            # Homogeneous 4D world points
+            world_points_3D = ImageRegistration.triangulate_landmarks(
+                self.camera_extrinsic_poses[i],
+                self.camera_extrinsic_poses[i+1],
+                points_1,
+                points_2,
+                self.camera_intrinsics)
+
+            self.world_points_3D.append(world_points_3D)
+
+    ################################## Helper methods for specific tasks ########################################
+    @staticmethod
+    def get_essential_matrix(F, K):
+        return K.T@F@K
+
+    @staticmethod
+    def get_camera_matrix(pose, K):
+        P = K@pose[0:3, 0:4]
+        return P
+
     @staticmethod
     def get_transformation_matrix(camera_projection_matrix):
         return np.linalg.inv(camera_projection_matrix)
@@ -397,26 +417,7 @@ class ImageRegistration:
         world_points_3D = T_camera_to_world@world_points_3D
         return world_points_3D
 
-    def triangulate_landmarks_all_views(self):
-        self.world_points_3D = []
-        for i in range(len(self.images) - 1):
-            # Inlier points
-            points_1 = self.inlier_points[i][0]
-            points_2 = self.inlier_points[i][1]
-            print("Points 1 shape", points_1.shape)
-
-            # Homogeneous 4D world points
-            world_points_3D = ImageRegistration.triangulate_landmarks(
-                self.camera_extrinsic_poses[i],
-                self.camera_extrinsic_poses[i+1],
-                points_1,
-                points_2,
-                self.camera_intrinsics)
-
-            self.world_points_3D.append(world_points_3D)
-
-
-    ######################### Plotting methods ###############################
+    ############################################# Plotting methods ####################################################
     def drawlines(self, first_index, second_index, lines1, lines2, pts1, pts2):
         """
         Draw epipolar line on image given by first_index.
