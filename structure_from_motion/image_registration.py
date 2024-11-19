@@ -139,6 +139,7 @@ class ImageRegistration:
         """
         self.keypoints = []
         self.descriptors = []
+        self.object_index_list = []
 
         # Set up the grid layout for plotting
         num_images = len(self.images)
@@ -164,6 +165,10 @@ class ImageRegistration:
 
             self.keypoints.append(keypoints)
             self.descriptors.append(descriptors)
+
+            # Create object index list for the image.
+            # NOTE: Refered from ZZ's code.
+            self.object_index_list.append(np.full(len(keypoints), -1, int))
 
             # Draw the keypoints on the grayscale image
             image_with_keypoints = cv2.drawKeypoints(
@@ -205,15 +210,20 @@ class ImageRegistration:
         matches = brute_force_matcher.knnMatch(self.descriptors[index1], self.descriptors[index2], k=2)
 
         good_matches = []
+        index1_keypoint_index_list = []
+        index2_keypoint_index_list = []
         for m,n in matches:
             if m.distance < 0.8*n.distance:
                 good_matches.append([m])
+                # Store the indices of the points in good matches
+                index1_keypoint_index_list.append(m.queryIdx)
+                index2_keypoint_index_list.append(m.trainIdx)
 
-        return good_matches
+        return good_matches, np.array(index1_keypoint_index_list), np.array(index2_keypoint_index_list)
 
 
     # TODO(KSorte): Implement an iterative 8 point algorithm to compute fundamental matrix.
-    def compute_fundamental_matrix(self, first_index, second_index, good_matches):
+    def compute_fundamental_matrix(self, first_index, second_index, good_matches, first_indices, second_indices):
         """
         Computes the fundamental matrix between two images using matched keypoints.
 
@@ -231,25 +241,164 @@ class ImageRegistration:
         # Get coordinates of the matched keypoints from both images.
         first_pts = np.float32([self.keypoints[first_index][m[0].queryIdx].pt for m in good_matches]).reshape(-1, 1, 2)
         second_pts = np.float32([self.keypoints[second_index][m[0].trainIdx].pt for m in good_matches]).reshape(-1, 1, 2)
-        F, mask = cv2.findFundamentalMat(first_pts, second_pts, cv2.FM_RANSAC, ransacReprojThreshold=self.ransac_reproj_thres)
 
+        F, mask = cv2.findFundamentalMat(first_pts, second_pts, cv2.FM_RANSAC, ransacReprojThreshold=self.ransac_reproj_thres)
+        # print("Mask in F", mask)
         # Select only inlier points
         inlier_points1 = first_pts[mask.ravel()==1]
         inlier_points2 = second_pts[mask.ravel()==1]
+
+        first_indices = first_indices[mask.ravel()==1]
+        second_indices = second_indices[mask.ravel()==1]
 
         # Separate good matches into inliers and outliers based on the mask.
         inlier_matches = [good_matches[i] for i in range(len(good_matches)) if mask[i]]
 
         # TODO(KSorte): Handle this return tuple better.
-        return F, inlier_points1, inlier_points2, inlier_matches
+        return F, inlier_points1, inlier_points2, inlier_matches, first_indices, second_indices
 
-    def get_essential_matrix(self, F):
-        return self.camera_intrinsics.T@F@self.camera_intrinsics
+    # TODO(KSorte): Split this function up.
+    def process_epipolar_geometry_and_recover_relative_poses(self):
+        """
+        Computes feature matches, fundamental matrices, essential matrices, and relative poses between consecutive images in a sequence.
 
-    def get_camera_matrix(self, pose):
-        P = self.camera_intrinsics@pose[0:3, 0:4]
+        Matches keypoints between consecutive images, visualizes the matches, computes the fundamental
+        matrix for each image pair using RANSAC, computes the essential matrix, and retrieves the relative pose.
+
+        Attributes:
+            self.image_feature_matches (list): Stores lists of good matches between consecutive images.
+            self.fundamental_matrices (list): Stores the fundamental matrices computed between consecutive image pairs.
+            self.essential_matrices (list): Stores the essential matrices computed between consecutive image pairs.
+            self.relative_poses (list): Stores the relative poses (rotation and translation) for consecutive image pairs.
+        """
+
+        self.essential_matrices = []
+        self.relative_poses = []
+        self.inlier_points = []
+        self.inlier_indices = []
+
+        for i in range(len(self.images) - 1):
+            # Get matches for i and i + 1 th image
+            good_matches, first_indices, second_indices = self.match_features(i, i+1)
+
+            # Get Fundamental Matrix and inlier matches.
+            F, inlier_points1, inlier_points2, inlier_matches, first_indices, second_indices = \
+                self.compute_fundamental_matrix(i, i+1, good_matches, first_indices, second_indices)
+
+            # TODO(KSorte): Add a condition that min 5 inliers needed.
+            # Compute essential matrix.
+            E = ImageRegistration.get_essential_matrix(F, self.camera_intrinsics)
+
+            # Recover relative pose.
+            _, R, T, pose_mask = cv2.recoverPose(E, inlier_points1, inlier_points2, self.camera_intrinsics)
+            self.relative_poses.append((R, T))
+
+            # Store E
+            self.essential_matrices.append(E)
+
+            inlier_points1 = inlier_points1[pose_mask == 255]
+            inlier_points2 = inlier_points2[pose_mask == 255]
+            pose_mask = np.squeeze(pose_mask != 0)
+
+            first_indices = first_indices[pose_mask]
+            second_indices = second_indices[pose_mask]
+
+            self.inlier_indices.append((first_indices, second_indices))
+
+            if inlier_points1.shape[0] == 0 or inlier_points2.shape[0] == 0:
+                print("empty inliers")
+
+            self.inlier_points.append((inlier_points1, inlier_points2))
+
+            if self.visualize_epipolar_lines:
+                # Compute and Visualize epipolar lines
+                self.compute_and_draw_epipolar_lines(i, i+1, inlier_matches, F)
+
+
+    def compute_camera_extrinsics(self):
+        """
+        Computes absolute poses (4x4 transformation matrices) for each image in the sequence
+        from relative poses (stored as tuples) between consecutive images.
+
+        Assumes the first image is at the origin with an identity pose.
+
+        Attributes:
+            self.camera_extrinsic_poses (list): Stores the 4x4 transformation matrices for each image in the sequence.
+        """
+        # Initialize the absolute poses list
+        self.camera_extrinsic_poses = []
+
+        # Start with the first pose as the identity matrix (4x4)
+        initial_pose = np.eye(4)
+        self.camera_extrinsic_poses.append(initial_pose)
+
+        # Iterate through relative poses to compute the absolute poses
+        for i, (relative_rotation, relative_translation) in enumerate(self.relative_poses):
+            # Retrieve the previous absolute pose
+            prev_pose = self.camera_extrinsic_poses[i]
+
+            # Construct the 4x4 transformation matrix for the current relative pose
+            relative_pose = np.eye(4)
+            relative_pose[:3, :3] = relative_rotation
+            relative_pose[:3, 3] = relative_translation.flatten()
+
+            # Compute the new absolute pose by chaining the previous absolute pose and the relative pose
+            # TODO(KSorte): Explore this formulation.
+            # current_pose = prev_pose @ relative_pose
+            current_pose = relative_pose @ prev_pose
+
+            # Store the absolute pose for the current image
+            self.camera_extrinsic_poses.append(current_pose)
+
+    def triangulate_landmarks_all_views(self):
+        self.world_points_3D = []
+        for i in range(len(self.images) - 1):
+            # Inlier points
+            points_1 = self.inlier_points[i][0]
+            points_2 = self.inlier_points[i][1]
+
+            # Homogeneous 4D world points
+            world_points_3D = ImageRegistration.triangulate_landmarks(
+                self.camera_extrinsic_poses[i],
+                self.camera_extrinsic_poses[i+1],
+                points_1,
+                points_2,
+                self.camera_intrinsics)
+
+            self.world_points_3D.append(world_points_3D)
+
+    ################################## Helper methods for specific tasks ########################################
+    @staticmethod
+    def get_essential_matrix(F, K):
+        return K.T@F@K
+
+    @staticmethod
+    def get_camera_matrix(pose, K):
+        P = K@pose[0:3, 0:4]
         return P
 
+    @staticmethod
+    def get_transformation_matrix(camera_projection_matrix):
+        return np.linalg.inv(camera_projection_matrix)
+
+    @staticmethod
+    def triangulate_landmarks(projection_1, projection_2, points_1, points_2, K):
+        P1 = ImageRegistration.get_camera_matrix(projection_1, K)
+        P2 = ImageRegistration.get_camera_matrix(projection_2, K)
+        world_points_3D = cv2.triangulatePoints(P1, P2, points_1.reshape(-1, 1, 2), points_2.reshape(-1, 1, 2))
+
+        # Convert to Euclidean coordinates by dividing by the 4th coordinate.
+        world_points_3D[:3, :] = world_points_3D[:3, :]/world_points_3D[3, :]
+
+        # Compute the transform from the camera frame to world frame.
+        T_camera_to_world = np.linalg.inv(projection_1)
+
+        # TODO (KSorte): Review this transformation of landmarks into the world frame.
+        # Convert the homogeneous landmark coordinates from the first camera frame to the world frame.
+        world_points_3D = T_camera_to_world@world_points_3D
+        return world_points_3D
+
+    ############################################# Plotting methods ####################################################
     def drawlines(self, first_index, second_index, lines1, lines2, pts1, pts2):
         """
         Draw epipolar line on image given by first_index.
@@ -338,89 +487,6 @@ class ImageRegistration:
         plt.title(f'Epipolar lines on image {second_index + 1}')
         plt.show()
 
-    # TODO(KSorte): Split this function up.
-    def process_epipolar_geometry_and_recover_relative_poses(self):
-        """
-        Computes feature matches, fundamental matrices, essential matrices, and relative poses between consecutive images in a sequence.
-
-        Matches keypoints between consecutive images, visualizes the matches, computes the fundamental
-        matrix for each image pair using RANSAC, computes the essential matrix, and retrieves the relative pose.
-
-        Attributes:
-            self.image_feature_matches (list): Stores lists of good matches between consecutive images.
-            self.fundamental_matrices (list): Stores the fundamental matrices computed between consecutive image pairs.
-            self.essential_matrices (list): Stores the essential matrices computed between consecutive image pairs.
-            self.relative_poses (list): Stores the relative poses (rotation and translation) for consecutive image pairs.
-        """
-        self.fundamental_matrices = []
-        self.essential_matrices = []
-        self.relative_poses = []
-        self.inlier_points = []
-
-        for i in range(len(self.images) - 1):
-            # Get matches for i and i + 1 th image
-            good_matches = self.match_features(i, i+1)
-            # Get Fundamental Matrix and inlier matches.
-            F, inlier_points1, inlier_points2, inlier_matches = self.compute_fundamental_matrix(i, i+1, good_matches=good_matches)
-
-            # TODO(KSorte): Add a condition that min 5 inliers needed.
-            # Compute essential matrix.
-            E = self.get_essential_matrix(F)
-
-            _, R, T, mask = cv2.recoverPose(E, inlier_points1, inlier_points2, self.camera_intrinsics)
-            self.relative_poses.append((R, T))
-            # Store F and E
-            self.fundamental_matrices.append(F)
-            self.essential_matrices.append(E)
-            # print(f"Mask at {i} and {i+1} is {mask}")
-
-            inlier_points1 = inlier_points1[mask == 255].reshape(-1, 1, 2)
-            inlier_points2 = inlier_points2[mask == 255].reshape(-1, 1, 2)
-            if inlier_points1.shape[0] == 0 or inlier_points2.shape[0] == 0:
-                print("empty inliers")
-            self.inlier_points.append((inlier_points1, inlier_points2))
-
-            if self.visualize_epipolar_lines:
-                # Compute and Visualize epipolar lines
-                self.compute_and_draw_epipolar_lines(i, i+1, inlier_matches, F)
-
-
-    def compute_absolute_poses(self):
-        """
-        Computes absolute poses (4x4 transformation matrices) for each image in the sequence
-        from relative poses (stored as tuples) between consecutive images.
-
-        Assumes the first image is at the origin with an identity pose.
-
-        Attributes:
-            self.absolute_poses (list): Stores the 4x4 transformation matrices for each image in the sequence.
-        """
-        # Initialize the absolute poses list
-        self.absolute_poses = []
-
-        # Start with the first pose as the identity matrix (4x4)
-        initial_pose = np.eye(4)
-        self.absolute_poses.append(initial_pose)
-
-        # Iterate through relative poses to compute the absolute poses
-        for i, (relative_rotation, relative_translation) in enumerate(self.relative_poses):
-            # Retrieve the previous absolute pose
-            prev_pose = self.absolute_poses[i]
-
-            # Construct the 4x4 transformation matrix for the current relative pose
-            relative_pose = np.eye(4)
-            relative_pose[:3, :3] = relative_rotation
-            relative_pose[:3, 3] = relative_translation.flatten()
-
-            # Compute the new absolute pose by chaining the previous absolute pose and the relative pose
-            # TODO(KSorte): Explore this formulation.
-            # current_pose = prev_pose @ relative_pose
-            current_pose = relative_pose @ prev_pose
-
-            # Store the absolute pose for the current image
-            self.absolute_poses.append(current_pose)
-
-
     def plot_camera_poses(self, axis_length=0.1):
         """
         Plots all camera poses in 3D.
@@ -443,7 +509,7 @@ class ImageRegistration:
         ax.set_zlabel("Z")
 
         # Plot each camera pose
-        for i, pose in enumerate(self.absolute_poses):
+        for i, pose in enumerate(self.camera_extrinsic_poses):
 
             # Extract rotation and translation from the 4x4 pose matrix
             R = pose[:3, :3]
@@ -471,34 +537,8 @@ class ImageRegistration:
         # Show the plot
         plt.show()
 
-    def triangulate_landmarks(self):
-        self.world_points_3D = []
-        for i in range(len(self.images) - 1):
-            # Camera matrices
-            P1 = self.get_camera_matrix(self.absolute_poses[i])
-            P2 = self.get_camera_matrix(self.absolute_poses[i+1])
-
-            # Inlier points
-            points_1 = self.inlier_points[i][0]
-            points_2 = self.inlier_points[i][1]
-            print("Points 1 shape", points_1.shape)
-
-            # Homogeneous 4D world points
-            world_points_3D = cv2.triangulatePoints(P1, P2, points_1, points_2)
-
-            # Convert to Euclidean coordinates by dividing by the 4th coordinate.
-            world_points_3D[:3, :] = world_points_3D[:3, :]/world_points_3D[3, :]
-
-            # TODO (KSorte): Review this transformation of landmarks into the world frame.
-            # Compute the transform from the camera frame to world frame.
-            T_camera_to_world = np.linalg.inv(self.absolute_poses[i])
-
-            # Convert the homogeneous landmark coordinates from the first camera frame to the world frame.
-            world_points_3D = T_camera_to_world@world_points_3D
-
-            self.world_points_3D.append(world_points_3D)
-
-    def plot_points_3d(self):
+    @staticmethod
+    def plot_points_3d(world_points_3D):
         """
         Simple 3D scatter plot of triangulated points.
 
@@ -511,7 +551,7 @@ class ImageRegistration:
         ax = fig.add_subplot(111, projection='3d')
 
         # Plot points from each image pair
-        for points_4d in self.world_points_3D:
+        for points_4d in world_points_3D:
             points_3d = points_4d[:3]
 
             # Plot the points
