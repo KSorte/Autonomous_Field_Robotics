@@ -280,16 +280,10 @@ class ImageRegistration:
         for i in range(len(self.images) - 1):
             # Get matches for i and i + 1 th image
             good_matches, first_indices, second_indices = self.match_features(i, i+1)
-            # print("good matches", len(good_matches))
 
             # Get Fundamental Matrix and inlier matches.
             F, inlier_points1, inlier_points2, inlier_matches, first_indices, second_indices = \
                 self.compute_fundamental_matrix(i, i+1, good_matches, first_indices, second_indices)
-
-            # print("inlier 1 shape after F", inlier_points1.shape)
-            # print("inlier 2 shape after F", inlier_points2.shape)
-            # print("first indices shape after F", first_indices.shape)
-            # print("second indices shape after F", second_indices.shape)
 
             # TODO(KSorte): Add a condition that min 5 inliers needed.
             # Compute essential matrix.
@@ -298,7 +292,6 @@ class ImageRegistration:
             # Recover relative pose.
             _, R, T, pose_mask = cv2.recoverPose(E, inlier_points1, inlier_points2, self.camera_intrinsics)
             self.relative_poses.append((R, T))
-            # print("Pose mask", pose_mask)
 
             # Store E
             self.essential_matrices.append(E)
@@ -307,19 +300,8 @@ class ImageRegistration:
             inlier_points2 = inlier_points2[pose_mask == 255]
             pose_mask = np.squeeze(pose_mask != 0)
 
-            # print("inlier 1 shape recovering relative pose", inlier_points1.shape)
-            # print("inlier 2 shape recovering relative pose", inlier_points2.shape)
-
-            # print("Pose mask", pose_mask)
-
-            # print("pose mask shape after recovering relative pose", pose_mask.shape)
-            print("first indices shape", first_indices)
-            print("second indices shape", second_indices)
             first_indices = first_indices[pose_mask]
             second_indices = second_indices[pose_mask]
-
-            # print("first indices shape after applying pose mask", first_indices.shape)
-            # print("second indices shape after applying pose mask", second_indices.shape)
 
             self.inlier_indices.append((first_indices, second_indices))
 
@@ -567,10 +549,9 @@ class ImageRegistration:
         # Create 3D plot
         fig = plt.figure()
         ax = fig.add_subplot(111, projection='3d')
-        print("length 4d points", len(world_points_3D))
+
         # Plot points from each image pair
         for points_4d in world_points_3D:
-            print("points 4d shape", points_4d.shape)
             points_3d = points_4d[:3]
 
             # Plot the points
