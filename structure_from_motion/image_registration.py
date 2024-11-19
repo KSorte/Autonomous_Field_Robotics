@@ -260,8 +260,9 @@ class ImageRegistration:
     def get_essential_matrix(self, F):
         return self.camera_intrinsics.T@F@self.camera_intrinsics
 
-    def get_camera_matrix(self, pose):
-        P = self.camera_intrinsics@pose[0:3, 0:4]
+    @staticmethod
+    def get_camera_matrix(pose, K):
+        P = K@pose[0:3, 0:4]
         return P
 
     # TODO(KSorte): Split this function up.
@@ -375,30 +376,42 @@ class ImageRegistration:
             # Store the absolute pose for the current image
             self.camera_extrinsic_poses.append(current_pose)
 
-    def triangulate_landmarks(self):
+    @staticmethod
+    def get_transformation_matrix(camera_projection_matrix):
+        return np.linalg.inv(camera_projection_matrix)
+
+    @staticmethod
+    def triangulate_landmarks(projection_1, projection_2, points_1, points_2, K):
+        P1 = ImageRegistration.get_camera_matrix(projection_1, K)
+        P2 = ImageRegistration.get_camera_matrix(projection_2, K)
+        world_points_3D = cv2.triangulatePoints(P1, P2, points_1.reshape(-1, 1, 2), points_2.reshape(-1, 1, 2))
+
+        # Convert to Euclidean coordinates by dividing by the 4th coordinate.
+        world_points_3D[:3, :] = world_points_3D[:3, :]/world_points_3D[3, :]
+
+        # Compute the transform from the camera frame to world frame.
+        T_camera_to_world = np.linalg.inv(projection_1)
+
+        # TODO (KSorte): Review this transformation of landmarks into the world frame.
+        # Convert the homogeneous landmark coordinates from the first camera frame to the world frame.
+        world_points_3D = T_camera_to_world@world_points_3D
+        return world_points_3D
+
+    def triangulate_landmarks_all_views(self):
         self.world_points_3D = []
         for i in range(len(self.images) - 1):
-            # Camera matrices
-            P1 = self.get_camera_matrix(self.camera_extrinsic_poses[i])
-            P2 = self.get_camera_matrix(self.camera_extrinsic_poses[i+1])
-
             # Inlier points
             points_1 = self.inlier_points[i][0]
             points_2 = self.inlier_points[i][1]
             print("Points 1 shape", points_1.shape)
 
             # Homogeneous 4D world points
-            world_points_3D = cv2.triangulatePoints(P1, P2, points_1.reshape(-1, 1, 2), points_2.reshape(-1, 1, 2))
-
-            # Convert to Euclidean coordinates by dividing by the 4th coordinate.
-            world_points_3D[:3, :] = world_points_3D[:3, :]/world_points_3D[3, :]
-
-            # TODO (KSorte): Review this transformation of landmarks into the world frame.
-            # Compute the transform from the camera frame to world frame.
-            T_camera_to_world = np.linalg.inv(self.camera_extrinsic_poses[i])
-
-            # Convert the homogeneous landmark coordinates from the first camera frame to the world frame.
-            world_points_3D = T_camera_to_world@world_points_3D
+            world_points_3D = ImageRegistration.triangulate_landmarks(
+                self.camera_extrinsic_poses[i],
+                self.camera_extrinsic_poses[i+1],
+                points_1,
+                points_2,
+                self.camera_intrinsics)
 
             self.world_points_3D.append(world_points_3D)
 
