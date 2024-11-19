@@ -374,7 +374,6 @@ class ImageRegistration:
             # Inlier points
             points_1 = self.inlier_points[i][0]
             points_2 = self.inlier_points[i][1]
-            print("Points 1 shape", points_1.shape)
 
             # Homogeneous 4D world points
             world_points_3D = ImageRegistration.triangulate_landmarks(
@@ -556,7 +555,8 @@ class ImageRegistration:
         # Show the plot
         plt.show()
 
-    def plot_points_3d(self):
+    @staticmethod
+    def plot_points_3d(world_points_3D):
         """
         Simple 3D scatter plot of triangulated points.
 
@@ -567,9 +567,10 @@ class ImageRegistration:
         # Create 3D plot
         fig = plt.figure()
         ax = fig.add_subplot(111, projection='3d')
-
+        print("length 4d points", len(world_points_3D))
         # Plot points from each image pair
-        for points_4d in self.world_points_3D:
+        for points_4d in world_points_3D:
+            print("points 4d shape", points_4d.shape)
             points_3d = points_4d[:3]
 
             # Plot the points
