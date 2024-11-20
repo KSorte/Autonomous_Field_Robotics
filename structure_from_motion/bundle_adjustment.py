@@ -47,8 +47,13 @@ class GTSAMBundleAdjustment:
         L(0), self.img_reg_obj.world_points_3D[0][0:3, 0], self.point_noise)
         self.graph.push_back(point_factor)
 
+        num_landmarks = len(self.all_landmarks_count)
         # Start with an identity pose.
         current_pose = np.eye(4)
+
+        # Add Initial pose estimates for i and i+1 views.
+        self.initial.insert(X(0), gtsam.Pose3(current_pose))
+
         for i in range(len(self.img_reg_obj.images)-1):
             # Get i+1th camera extrinsics.
             camera_projection = self.img_reg_obj.camera_extrinsic_poses[i+1]
@@ -56,39 +61,57 @@ class GTSAMBundleAdjustment:
             camera_pose = ir.ImageRegistration.get_transformation_matrix(camera_projection)
 
             # Get i and i+1th view keypoints.
-            src_points = self.img_reg_obj.inlier_points[0][i]
-            dst_points = self.img_reg_obj.inlier_points[0][i+1]
+            src_points = self.img_reg_obj.inlier_points[i][0]
+            dst_points = self.img_reg_obj.inlier_points[i][1]
 
             # Get i and i+1th view keypoint indices.
-            src_point_index_list = self.img_reg_obj.inlier_indices[0][i]
-            dst_point_index_list = self.img_reg_obj.inlier_indices[0][i+1]
+            src_point_index_list = self.img_reg_obj.inlier_indices[i][0]
+            dst_point_index_list = self.img_reg_obj.inlier_indices[i][1]
 
-            # Create factors using inlier points and world 3d points for i and i+1 th views.
-            for object_index, (src_point, dst_point, src_point_index, dst_point_index) in enumerate(zip(src_points,
-                                                                                                        dst_points,
-                                                                                                        src_point_index_list,
-                                                                                                        dst_point_index_list)):
+            # Iterate over matched keypoints for the i-i+1 views.
+            for j, (src_point, dst_point, src_point_index, dst_point_index) in enumerate(zip(src_points,
+                                                                                            dst_points,
+                                                                                            src_point_index_list,
+                                                                                            dst_point_index_list)):
 
-                landmark_point = self.img_reg_obj.world_points_3D[i][0:3, object_index]
-                # Update the object index for the src and dst points.
-                self.img_reg_obj.object_index_list[i][src_point_index] = object_index
-                self.img_reg_obj.object_index_list[i+1][dst_point_index] = object_index
+                # Get landmark point for the matched pair.
+                landmark_point = self.img_reg_obj.world_points_3D[i][0:3, j]
 
-                # Add landmark initial estimate
-                self.initial.insert(L(object_index), landmark_point)
+                # landmark index the source keypoint points to.
+                landmark_index_src = self.img_reg_obj.object_index_list[i][src_point_index]
+
+                # If this keypoint in the ith (src) image is unassigned.
+                if landmark_index_src == -1:
+                    # Update the object index for the src and dst points.
+                    self.img_reg_obj.object_index_list[i][src_point_index] = num_landmarks
+                    self.img_reg_obj.object_index_list[i+1][dst_point_index] = num_landmarks
+
+                    landmark_index_src = num_landmarks
+
+                    # Add landmark initial estimate
+                    self.initial.insert(L(num_landmarks), landmark_point)
+
+                    # New landmark. Increase count.
+                    num_landmarks += 1
+
+                    # new landmark appears in ith (src) and i+1th (dst) images.
+                    self.all_landmarks_count.append(2)
+                else:
+                    # Matched feature pair associated to an existing landmark.
+                    self.img_reg_obj.object_index_list[i+1][dst_point_index] = landmark_index_src
+                    # increment count : landmark also exists in i+1th (dst)
+                    self.all_landmarks_count[landmark_index_src] += 1
 
                 # Add landmark measurement factor for ith view.
                 self.graph.push_back(gtsam.GenericProjectionFactorCal3_S2(
-                    src_point, self.measurement_noise, X(i), L(object_index), self.GTSAM_camera_intrinsics))
+                    src_point, self.measurement_noise, X(i), L(landmark_index_src), self.GTSAM_camera_intrinsics))
 
                 # Add landmark measurement factor for the i+1th view.
                 self.graph.push_back(gtsam.GenericProjectionFactorCal3_S2(
-                    dst_point, self.measurement_noise, X(i+1), L(object_index), self.GTSAM_camera_intrinsics))
+                    dst_point, self.measurement_noise, X(i+1), L(landmark_index_src), self.GTSAM_camera_intrinsics))
 
-                self.all_landmarks_count.append(2)
+            print(f'Number of landmarks after considering views {i} and {i+1} is {num_landmarks}')
 
-            # Add Initial pose estimates for i and i+1 views.
-            self.initial.insert(X(i), gtsam.Pose3(current_pose))
             self.initial.insert(X(i+1), gtsam.Pose3(camera_pose))
 
         # print(self.graph)
