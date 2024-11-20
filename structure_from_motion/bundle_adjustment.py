@@ -3,9 +3,8 @@ import gtsam.utils.plot as gtsam_plot
 import matplotlib.pyplot as plt
 import numpy as np
 import image_registration as ir
-from gtsam import (Cal3_S2, DoglegOptimizer,
-                         GenericProjectionFactorCal3_S2, Marginals,
-                         NonlinearFactorGraph, PinholeCameraCal3_S2, Point3,
+from gtsam import (Cal3_S2,
+                         NonlinearFactorGraph,Point3,
                          Pose3, PriorFactorPoint3, PriorFactorPose3, Rot3, Values)
 from gtsam import symbol_shorthand
 L = symbol_shorthand.L
@@ -114,14 +113,10 @@ class GTSAMBundleAdjustment:
 
             self.initial.insert(X(i+1), gtsam.Pose3(camera_pose))
 
-        # print(self.graph)
-
     def optimize_graph(self):
         params = gtsam.LevenbergMarquardtParams()
         optimizer = gtsam.LevenbergMarquardtOptimizer(self.graph, self.initial, params)
         self.result = optimizer.optimize()
-
-        # print(self.result)
 
     def extract_landmarks_to_array(self):
         landmarks = []
