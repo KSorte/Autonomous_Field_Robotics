@@ -38,54 +38,58 @@ class GTSAMBundleAdjustment:
     def build_graph(self):
         self.initial = gtsam.Values()
 
-        # Prior Factor.
+        # Prior Pose Factor.
         prior_factor = PriorFactorPose3(X(0), gtsam.Pose3(), self.pose_noise)
         self.graph.push_back(prior_factor)
 
-        camera_projection = self.img_reg_obj.camera_extrinsic_poses[1]
-        camera_pose = ir.ImageRegistration.get_transformation_matrix(camera_projection)
-
-        # Add Initial estimates
-        self.initial.insert(X(0), gtsam.Pose3())
-        self.initial.insert(X(1), gtsam.Pose3(camera_pose))
-
-        # Add Point factor
+        # Add Prior Point factor.
         point_factor = gtsam.PriorFactorPoint3(
         L(0), self.img_reg_obj.world_points_3D[0][0:3, 0], self.point_noise)
         self.graph.push_back(point_factor)
 
-        src_points = self.img_reg_obj.inlier_points[0][0]
-        dst_points = self.img_reg_obj.inlier_points[0][0]
+        # Start with an identity pose.
+        current_pose = np.eye(4)
+        for i in range(len(self.img_reg_obj.images)-1):
+            # Get i+1th camera extrinsics.
+            camera_projection = self.img_reg_obj.camera_extrinsic_poses[i+1]
+            # Get i+1th camera pose.
+            camera_pose = ir.ImageRegistration.get_transformation_matrix(camera_projection)
 
-        src_point_index_list = self.img_reg_obj.inlier_indices[0][0]
-        dst_point_index_list = self.img_reg_obj.inlier_indices[0][1]
+            # Get i and i+1th view keypoints.
+            src_points = self.img_reg_obj.inlier_points[0][i]
+            dst_points = self.img_reg_obj.inlier_points[0][i+1]
 
-        # Create factors using inlier points and world 3d points.
-        # TODO (KSorte): What about the world coordinate points?
-        for object_index, (src_point, dst_point, src_point_index, dst_point_index) in enumerate(zip(src_points,
-                                                                                                    dst_points,
-                                                                                                    src_point_index_list,
-                                                                                                    dst_point_index_list,
-                                                                                                )):
+            # Get i and i+1th view keypoint indices.
+            src_point_index_list = self.img_reg_obj.inlier_indices[0][i]
+            dst_point_index_list = self.img_reg_obj.inlier_indices[0][i+1]
 
-            landmark_point = self.img_reg_obj.world_points_3D[0][0:3, object_index]
-            # Update the object index for the src and dst points.
-            self.img_reg_obj.object_index_list[0][src_point_index] = object_index
-            self.img_reg_obj.object_index_list[1][dst_point_index] = object_index
+            # Create factors using inlier points and world 3d points for i and i+1 th views.
+            for object_index, (src_point, dst_point, src_point_index, dst_point_index) in enumerate(zip(src_points,
+                                                                                                        dst_points,
+                                                                                                        src_point_index_list,
+                                                                                                        dst_point_index_list)):
 
-            # Add landmark initial estimate
-            self.initial.insert(L(object_index), landmark_point)
+                landmark_point = self.img_reg_obj.world_points_3D[i][0:3, object_index]
+                # Update the object index for the src and dst points.
+                self.img_reg_obj.object_index_list[i][src_point_index] = object_index
+                self.img_reg_obj.object_index_list[i+1][dst_point_index] = object_index
 
-            # Add landmark measurement factor for ith view.
-            self.graph.push_back(gtsam.GenericProjectionFactorCal3_S2(
-                src_point, self.measurement_noise, X(0), L(object_index), self.GTSAM_camera_intrinsics))
+                # Add landmark initial estimate
+                self.initial.insert(L(object_index), landmark_point)
 
-            # Add landmark measurement factor for the i+1th view.
-            self.graph.push_back(gtsam.GenericProjectionFactorCal3_S2(
-                dst_point, self.measurement_noise, X(1), L(object_index), self.GTSAM_camera_intrinsics))
+                # Add landmark measurement factor for ith view.
+                self.graph.push_back(gtsam.GenericProjectionFactorCal3_S2(
+                    src_point, self.measurement_noise, X(i), L(object_index), self.GTSAM_camera_intrinsics))
 
-            self.all_landmarks_count.append(2)
+                # Add landmark measurement factor for the i+1th view.
+                self.graph.push_back(gtsam.GenericProjectionFactorCal3_S2(
+                    dst_point, self.measurement_noise, X(i+1), L(object_index), self.GTSAM_camera_intrinsics))
 
+                self.all_landmarks_count.append(2)
+
+            # Add Initial pose estimates for i and i+1 views.
+            self.initial.insert(X(i), gtsam.Pose3(current_pose))
+            self.initial.insert(X(i+1), gtsam.Pose3(camera_pose))
 
         # print(self.graph)
 
