@@ -243,7 +243,6 @@ class ImageRegistration:
         second_pts = np.float32([self.keypoints[second_index][m[0].trainIdx].pt for m in good_matches]).reshape(-1, 1, 2)
 
         F, mask = cv2.findFundamentalMat(first_pts, second_pts, cv2.FM_RANSAC, ransacReprojThreshold=self.ransac_reproj_thres)
-        # print("Mask in F", mask)
         # Select only inlier points
         inlier_points1 = first_pts[mask.ravel()==1]
         inlier_points2 = second_pts[mask.ravel()==1]
@@ -343,8 +342,6 @@ class ImageRegistration:
             relative_pose[:3, 3] = relative_translation.flatten()
 
             # Compute the new absolute pose by chaining the previous absolute pose and the relative pose
-            # TODO(KSorte): Explore this formulation.
-            # current_pose = prev_pose @ relative_pose
             current_pose = relative_pose @ prev_pose
 
             # Store the absolute pose for the current image
