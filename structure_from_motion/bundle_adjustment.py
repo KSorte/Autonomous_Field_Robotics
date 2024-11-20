@@ -23,6 +23,9 @@ class GTSAMBundleAdjustment:
         # List to store the count of all the landmarks.
         self.all_landmarks_count = []
 
+        # To hold the average 3d point for landmarks.
+        self.all_landmarks_averages = []
+
     def define_factor_noises(self):
         # Define the camera observation noise model
         self.measurement_noise = gtsam.noiseModel.Isotropic.Sigma(2, 1.0)
@@ -67,17 +70,51 @@ class GTSAMBundleAdjustment:
             src_point_index_list = self.img_reg_obj.inlier_indices[i][0]
             dst_point_index_list = self.img_reg_obj.inlier_indices[i][1]
 
+            keypoints_assigned_before_src = []
+            keypoints_assigned_before_dst = []
+            averages_landmarks_found_before = []
+            # Iterate over keypoints in ith to find if assigned to a landmark.
+            for src_point, src_point_index, dst_point, dst_point_index in zip(src_points,
+                                                                              src_point_index_list,
+                                                                              dst_points,
+                                                                              dst_point_index_list):
+                # Get object index
+                landmark_index_src = self.img_reg_obj.object_index_list[i][src_point_index]
+                if landmark_index_src != -1:
+                    keypoints_assigned_before_src.append(src_point)
+                    keypoints_assigned_before_dst.append(dst_point)
+                    averages_landmarks_found_before.append(self.all_landmarks_averages[landmark_index_src])
+
+            # print("Common landmarks in ith", len(averages_landmarks_found_before))
+            # TODO (KSorte): Find the number of matched features needed for stable triangulation. Assigning 5 right now.
+            if (len(averages_landmarks_found_before) > 5):
+                # Convert to numpy arrays.
+                keypoints_assigned_before_src = np.array(keypoints_assigned_before_src)
+                keypoints_assigned_before_dst = np.array(keypoints_assigned_before_dst)
+                averages_landmarks_found_before = np.array(averages_landmarks_found_before)
+                # print("keypoints shape averaging", keypoints_assigned_before_src.shape)
+                cam_i = self.img_reg_obj.camera_extrinsic_poses[i]
+                cam_i_1 = self.img_reg_obj.camera_extrinsic_poses[i+1]
+                # print("Re triangulating...")
+                retriagulated_landmarks = \
+                    ir.ImageRegistration.triangulate_landmarks(cam_i, cam_i_1,
+                                                               keypoints_assigned_before_src,
+                                                               keypoints_assigned_before_dst,
+                                                               self.img_reg_obj.camera_intrinsics)
+
+            overlapping_landmarks = 0
             # Iterate over matched keypoints for the i-i+1 views.
             for j, (src_point, dst_point, src_point_index, dst_point_index) in enumerate(zip(src_points,
                                                                                             dst_points,
                                                                                             src_point_index_list,
                                                                                             dst_point_index_list)):
 
-                # Get landmark point for the matched pair.
+                # Get landmark point for the matched pair. 3x1
                 landmark_point = self.img_reg_obj.world_points_3D[i][0:3, j]
 
                 # landmark index the source keypoint points to.
                 landmark_index_src = self.img_reg_obj.object_index_list[i][src_point_index]
+
 
                 # If this keypoint in the ith (src) image is unassigned.
                 if landmark_index_src == -1:
@@ -93,13 +130,25 @@ class GTSAMBundleAdjustment:
                     # New landmark. Increase count.
                     num_landmarks += 1
 
+                    # Add landmark to averages list.
+                    self.all_landmarks_averages.append(landmark_point)
+
                     # new landmark appears in ith (src) and i+1th (dst) images.
                     self.all_landmarks_count.append(2)
                 else:
+                    # print("Existing landmark found = ", landmark_index_src)
                     # Matched feature pair associated to an existing landmark.
                     self.img_reg_obj.object_index_list[i+1][dst_point_index] = landmark_index_src
+
+                    landmark_count = self.all_landmarks_count[landmark_index_src]
+                    old_average = self.all_landmarks_averages[landmark_index_src]
+                    # Update average.
+                    self.all_landmarks_averages[landmark_index_src] = (landmark_count*old_average + landmark_point)/(landmark_count)
+
                     # increment count : landmark also exists in i+1th (dst)
                     self.all_landmarks_count[landmark_index_src] += 1
+
+                    overlapping_landmarks += 1
 
                 # Add landmark measurement factor for ith view.
                 self.graph.push_back(gtsam.GenericProjectionFactorCal3_S2(
@@ -109,6 +158,8 @@ class GTSAMBundleAdjustment:
                 self.graph.push_back(gtsam.GenericProjectionFactorCal3_S2(
                     dst_point, self.measurement_noise, X(i+1), L(landmark_index_src), self.GTSAM_camera_intrinsics))
 
+            print(f'Number of landmarks in views {i} and {i+1} is {src_points.shape[0]}')
+            print(f'Number of landmarks in views {i} and {i+1} found before is {overlapping_landmarks}')
             print(f'Number of landmarks after considering views {i} and {i+1} is {num_landmarks}')
 
             self.initial.insert(X(i+1), gtsam.Pose3(camera_pose))
