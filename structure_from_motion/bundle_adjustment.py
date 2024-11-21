@@ -13,6 +13,13 @@ X = symbol_shorthand.X
 
 class GTSAMBundleAdjustment:
     def __init__(self, image_registration_object: ir.ImageRegistration, minimum_matches_for_retriangulation = 75):
+        """
+        Initializes the SLAM system with camera intrinsics and data structures.
+
+        Args:
+            image_registration_object (ir.ImageRegistration): Instance of the image registration object.
+            minimum_matches_for_retriangulation (int, optional): Minimum matches required for retriangulation. Default is 75.
+        """
         self.img_reg_obj = image_registration_object
 
         # Camera intrinsics.
@@ -30,6 +37,14 @@ class GTSAMBundleAdjustment:
         self.minimum_matches_for_retriangulation = minimum_matches_for_retriangulation
 
     def define_factor_noises(self):
+        """
+        Defines noise models for factors in the SLAM graph.
+
+        Sets up the following noise models:
+            - Measurement noise: Isotropic noise for camera observations.
+            - Pose noise: Diagonal noise model for prior poses.
+            - Point noise: Isotropic noise for prior landmark positions.
+        """
         # Define the camera observation noise model
         self.measurement_noise = gtsam.noiseModel.Isotropic.Sigma(2, 1.0)
 
@@ -41,6 +56,19 @@ class GTSAMBundleAdjustment:
         self.point_noise = gtsam.noiseModel.Isotropic.Sigma(3, 0.1)
 
     def build_graph(self):
+        """
+        Builds the factor graph for SLAM using image registration results.
+
+        Initializes the graph with prior pose and landmark factors, adds initial
+        pose and landmark estimates, and incorporates scale adjustments and
+        retriangulation where applicable.
+
+        Updates:
+            self.graph (gtsam.NonlinearFactorGraph): Factor graph for SLAM.
+            self.initial (gtsam.Values): Initial estimates for poses and landmarks.
+            self.all_landmarks_count (list): Count of observations for each landmark.
+            self.all_landmarks_averages (list): Average positions of all landmarks.
+        """
         self.initial = gtsam.Values()
 
         # Prior Pose Factor.
@@ -181,6 +209,20 @@ class GTSAMBundleAdjustment:
                                    averages_landmarks_found_before,
                                    previous_cam_extrinsic_pose,
                                    current_cam_extrinsic_pose):
+        """
+        Adjusts the scale of triangulated landmarks and updates camera extrinsics.
+
+        Args:
+            i (int): Index of the current relative pose in `self.img_reg_obj.relative_poses`.
+            keypoints_assigned_before_src (numpy.ndarray): Keypoints from the source image.
+            keypoints_assigned_before_dst (numpy.ndarray): Keypoints from the destination image.
+            averages_landmarks_found_before (numpy.ndarray): Average positions of previously found landmarks.
+            previous_cam_extrinsic_pose (numpy.ndarray): Extrinsic pose of the previous camera (4x4).
+            current_cam_extrinsic_pose (numpy.ndarray): Extrinsic pose of the current camera (4x4).
+
+        Returns:
+            numpy.ndarray: Updated camera extrinsic pose for the current view (4x4).
+        """
 
         retriangulated_landmarks = \
             ir.ImageRegistration.triangulate_landmarks(previous_cam_extrinsic_pose,
@@ -217,11 +259,24 @@ class GTSAMBundleAdjustment:
 
 
     def optimize_graph(self):
+        """
+        Optimizes the SLAM factor graph using Levenberg-Marquardt.
+
+        Updates:
+            self.result (gtsam.Values): Optimized values for poses and landmarks.
+        """
         params = gtsam.LevenbergMarquardtParams()
         optimizer = gtsam.LevenbergMarquardtOptimizer(self.graph, self.initial, params)
         self.result = optimizer.optimize()
 
     def extract_landmarks_to_array(self):
+        """
+        Extracts optimized 3D landmarks from the result into a homogeneous array.
+
+        Updates:
+            self.landmarks_list (list): List containing a 4xN numpy array of optimized landmarks
+                                        in homogeneous coordinates (one array per optimization).
+        """
         landmarks = []
 
         # Iterate over all keys in the result
