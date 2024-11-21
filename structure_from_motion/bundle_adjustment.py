@@ -88,8 +88,6 @@ class GTSAMBundleAdjustment:
                     # Store current average of the repeated landmark points
                     averages_landmarks_found_before.append(self.all_landmarks_averages[landmark_index_src])
 
-            # print("Common landmarks in ith", len(averages_landmarks_found_before))
-            # TODO (KSorte): Find the number of matched features needed for stable triangulation. Assigning 5 right now.
             if (len(averages_landmarks_found_before) > self.minimum_matches_for_retriangulation):
                 # Convert to numpy arrays.
                 keypoints_assigned_before_src = np.array(keypoints_assigned_before_src)
@@ -97,38 +95,14 @@ class GTSAMBundleAdjustment:
                 # N x 3
                 averages_landmarks_found_before = np.array(averages_landmarks_found_before)
 
-                retriangulated_landmarks = \
-                    ir.ImageRegistration.triangulate_landmarks(previous_cam_extrinsic_pose,
-                                                               current_cam_extrinsic_pose,
-                                                               keypoints_assigned_before_src,
-                                                               keypoints_assigned_before_dst,
-                                                               self.img_reg_obj.camera_intrinsics)
-
-                retriangulated_landmarks = (retriangulated_landmarks[0:3, :]).T
-
-                # # Compute the scale difference.
-                scale = 0
-                for p in range(retriangulated_landmarks.shape[0]):
-                    scale += \
-                    cv2.norm(averages_landmarks_found_before[p, :])/cv2.norm(retriangulated_landmarks[p, :])
-
-                scale /= retriangulated_landmarks.shape[0]
-                print("Scale = ", scale)
-
-                # Get R, T from relative pose b/w i and i+1th view.
-                rotation, translation = self.img_reg_obj.relative_poses[i]
-
-                # Adjust the translation scale.
-                translation *= scale
-
-                # Get refined SE3 relative pose
-                refined_relative_pose = np.eye(4)
-                refined_relative_pose[:3, :3] = rotation
-                refined_relative_pose[:3, 3] = translation.flatten()
-
-                # Use refined translation to get new camera extrinsics.
-                current_cam_extrinsic_pose = refined_relative_pose@previous_cam_extrinsic_pose
-
+                # Adjust scale.
+                current_cam_extrinsic_pose = \
+                    self.adjust_triangulation_scale(i,
+                                                    keypoints_assigned_before_src,
+                                                    keypoints_assigned_before_dst,
+                                                    averages_landmarks_found_before,
+                                                    previous_cam_extrinsic_pose,
+                                                    current_cam_extrinsic_pose)
                 # Update ImageRegistration object
                 self.img_reg_obj.camera_extrinsic_poses[i+1] = current_cam_extrinsic_pose
 
@@ -200,6 +174,47 @@ class GTSAMBundleAdjustment:
             print(f'Number of landmarks in views {i} and {i+1} is {src_points.shape[0]}')
             print(f'Number of landmarks in views {i} and {i+1} found before is {overlapping_landmarks}')
             print(f'Number of landmarks after considering views {i} and {i+1} is {num_landmarks}')
+
+    def adjust_triangulation_scale(self, i,
+                                   keypoints_assigned_before_src,
+                                   keypoints_assigned_before_dst,
+                                   averages_landmarks_found_before,
+                                   previous_cam_extrinsic_pose,
+                                   current_cam_extrinsic_pose):
+
+        retriangulated_landmarks = \
+            ir.ImageRegistration.triangulate_landmarks(previous_cam_extrinsic_pose,
+                                                        current_cam_extrinsic_pose,
+                                                        keypoints_assigned_before_src,
+                                                        keypoints_assigned_before_dst,
+                                                        self.img_reg_obj.camera_intrinsics)
+
+        retriangulated_landmarks = (retriangulated_landmarks[0:3, :]).T
+
+        # # Compute the scale difference.
+        scale = 0
+        for p in range(retriangulated_landmarks.shape[0]):
+            scale += \
+            cv2.norm(averages_landmarks_found_before[p, :])/cv2.norm(retriangulated_landmarks[p, :])
+
+        scale /= retriangulated_landmarks.shape[0]
+
+        # Get R, T from relative pose b/w i and i+1th view.
+        rotation, translation = self.img_reg_obj.relative_poses[i]
+
+        # Adjust the translation scale.
+        translation *= scale
+
+        # Get refined SE3 relative pose
+        refined_relative_pose = np.eye(4)
+        refined_relative_pose[:3, :3] = rotation
+        refined_relative_pose[:3, 3] = translation.flatten()
+
+        # Use refined translation to get new camera extrinsics.
+        current_cam_extrinsic_pose = refined_relative_pose@previous_cam_extrinsic_pose
+
+        return current_cam_extrinsic_pose
+
 
     def optimize_graph(self):
         params = gtsam.LevenbergMarquardtParams()
