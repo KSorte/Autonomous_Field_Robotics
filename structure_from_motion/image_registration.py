@@ -19,7 +19,7 @@ class ImageRegistration:
                  sift_sigma = 1.6,
                  ransac_reproj_thres = 5.0):
         """
-        Initializes the ImageRegistration class with placeholder values.
+        Initializes the ImageRegistration class.
         """
         self.images = []
 
@@ -39,13 +39,21 @@ class ImageRegistration:
         self.ransac_reproj_thres = ransac_reproj_thres
 
     def set_camera_intrinsics(self, f, px, py):
+        """
+        Sets the camera intrinsic matrix.
+
+        Parameters:
+            f (float): Focal length of the camera.
+            px (float): x-coordinate of the principal point.
+            py (float): y-coordinate of the principal point.
+        """
         self.camera_intrinsics = np.array([[f, 0, px],
                           [0, f, py],
                           [0, 0, 1]])
 
     def get_images_for_registration(self):
         """
-        Loads all images from multiple subdirectories for mosaicking and displays them.
+        Loads all images from multiple subdirectories for registration and displays them.
         Images are read in numerical order based on their filenames.
 
         Sets the camera intrinsics.
@@ -192,18 +200,23 @@ class ImageRegistration:
 
     def match_features(self, index1, index2):
         """
-        Finds good matches from the keypoints and descripters.
+        Matches features between two images using a brute-force approach.
 
-        Utilizes a brute force approach to find potential matches and
-        reject matches if the second best match is too close.
+        This function uses a K-Nearest Neighbor (KNN) brute-force matcher to
+        find potential feature matches between the descriptors of two images.
+        Matches are filtered using the ratio test to retain only good matches
+        where the best match is significantly better than the second-best match.
 
         Args:
-            index1 (int): Index of the first image from `self.images`.
-            index2 (int): Index of the second image from `self.images`.
+            index1 (int): Index of the first image in `self.images`.
+            index2 (int): Index of the second image in `self.images`.
 
         Returns:
-            good_matches (list of cv2.DMatch): List of good matches between the two images.
-        """
+            tuple:
+                good_matches (list of list of cv2.DMatch): List of good matches, where each match is a list containing a single `cv2.DMatch` object.
+                index1_keypoint_index_list (numpy.ndarray): Array of keypoint indices in the first image corresponding to the good matches.
+                index2_keypoint_index_list (numpy.ndarray): Array of keypoint indices in the second image corresponding to the good matches.
+    """
         brute_force_matcher = cv2.BFMatcher()
 
         # Get matches between the two images, alongwith a second best match for each batch.
@@ -225,18 +238,23 @@ class ImageRegistration:
     # TODO(KSorte): Implement an iterative 8 point algorithm to compute fundamental matrix.
     def compute_fundamental_matrix(self, first_index, second_index, good_matches, first_indices, second_indices):
         """
-        Computes the fundamental matrix between two images using matched keypoints.
-
-        The function takes matched keypoints between two images, and applies RANSAC
-        to compute the fundamental matrix.
+        Computes the fundamental matrix using matched keypoints and RANSAC.
 
         Args:
             first_index (int): Index of the source image in `self.images`.
             second_index (int): Index of the destination image in `self.images`.
-            good_matches (list of cv2.DMatch): List of good matches between the two images.
+            good_matches (list of cv2.DMatch): List of good feature matches.
+            first_indices (numpy.ndarray): Indices of keypoints in the first image.
+            second_indices (numpy.ndarray): Indices of keypoints in the second image.
 
         Returns:
-            numpy.ndarray: The computed fundamental matrix (3x3).
+            tuple: (F, inlier_points1, inlier_points2, inlier_matches, first_indices, second_indices)
+                - F (numpy.ndarray): Computed fundamental matrix (3x3).
+                - inlier_points1 (numpy.ndarray): Inlier points in the first image.
+                - inlier_points2 (numpy.ndarray): Inlier points in the second image.
+                - inlier_matches (list of cv2.DMatch): Matches corresponding to inliers.
+                - first_indices (numpy.ndarray): Updated inlier indices for the first image.
+                - second_indices (numpy.ndarray): Updated inlier indices for the second image.
         """
         # Get coordinates of the matched keypoints from both images.
         first_pts = np.float32([self.keypoints[first_index][m[0].queryIdx].pt for m in good_matches]).reshape(-1, 1, 2)
@@ -316,7 +334,7 @@ class ImageRegistration:
 
     def compute_camera_extrinsics(self):
         """
-        Computes absolute poses (4x4 transformation matrices) for each image in the sequence
+        Computes camera extrinsics (4x4 transformation matrices) for each image in the sequence
         from relative poses (stored as tuples) between consecutive images.
 
         Assumes the first image is at the origin with an identity pose.
@@ -324,14 +342,14 @@ class ImageRegistration:
         Attributes:
             self.camera_extrinsic_poses (list): Stores the 4x4 transformation matrices for each image in the sequence.
         """
-        # Initialize the absolute poses list
+        # Initialize the camera extrinsics list
         self.camera_extrinsic_poses = []
 
         # Start with the first pose as the identity matrix (4x4)
         initial_pose = np.eye(4)
         self.camera_extrinsic_poses.append(initial_pose)
 
-        # Iterate through relative poses to compute the absolute poses
+        # Iterate through relative poses to compute the camera extrinsics
         for i, (relative_rotation, relative_translation) in enumerate(self.relative_poses):
             # Retrieve the previous absolute pose
             prev_pose = self.camera_extrinsic_poses[i]
@@ -348,6 +366,13 @@ class ImageRegistration:
             self.camera_extrinsic_poses.append(current_pose)
 
     def triangulate_landmarks_all_views(self):
+        """
+        Triangulates 3D landmarks from matched keypoints across all image pairs.
+
+        Updates:
+            self.world_points_3D (list): List of 3D world points (in homogeneous coordinates)
+                                        computed for each consecutive image pair.
+        """
         self.world_points_3D = []
         for i in range(len(self.images) - 1):
             # Inlier points
@@ -380,6 +405,19 @@ class ImageRegistration:
 
     @staticmethod
     def triangulate_landmarks(projection_1, projection_2, points_1, points_2, K):
+        """
+        Triangulates 3D landmarks from two sets of matched 2D points.
+
+        Args:
+            projection_1 (numpy.ndarray): Extrinsic matrix of the first camera (4x4).
+            projection_2 (numpy.ndarray): Extrinsic matrix of the second camera (4x4).
+            points_1 (numpy.ndarray): 2D points in the first image (Nx2).
+            points_2 (numpy.ndarray): 2D points in the second image (Nx2).
+            K (numpy.ndarray): Camera intrinsic matrix (3x3).
+
+        Returns:
+            numpy.ndarray: Triangulated 3D landmarks in homogeneous coordinates.
+        """
         P1 = ImageRegistration.get_camera_matrix(projection_1, K)
         P2 = ImageRegistration.get_camera_matrix(projection_2, K)
         world_points_3D = cv2.triangulatePoints(P1, P2, points_1.reshape(-1, 1, 2), points_2.reshape(-1, 1, 2))
