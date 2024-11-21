@@ -59,8 +59,8 @@ class GTSAMBundleAdjustment:
         """
         Builds the factor graph for SLAM using image registration results.
 
-        Initializes the graph with prior pose and landmark factors, adds initial 
-        pose and landmark estimates, and incorporates scale adjustments and 
+        Initializes the graph with prior pose and landmark factors, adds initial
+        pose and landmark estimates, and incorporates scale adjustments and
         retriangulation where applicable.
 
         Updates:
@@ -274,7 +274,7 @@ class GTSAMBundleAdjustment:
         Extracts optimized 3D landmarks from the result into a homogeneous array.
 
         Updates:
-            self.landmarks_list (list): List containing a 4xN numpy array of optimized landmarks 
+            self.landmarks_list (list): List containing a 4xN numpy array of optimized landmarks
                                         in homogeneous coordinates (one array per optimization).
         """
         landmarks = []

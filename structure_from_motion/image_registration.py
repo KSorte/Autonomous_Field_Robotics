@@ -106,7 +106,7 @@ class ImageRegistration:
             rows = math.ceil(num_images / cols)
 
         # Create a figure and a grid of subplots
-        fig, axes = plt.subplots(rows, cols, figsize=(15, 5 * rows))
+        _, axes = plt.subplots(rows, cols, figsize=(15, 5 * rows))
 
         # Flatten the axes array for easy iteration
         axes = axes.flatten()
