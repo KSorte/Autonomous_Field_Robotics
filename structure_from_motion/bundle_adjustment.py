@@ -12,7 +12,7 @@ L = symbol_shorthand.L
 X = symbol_shorthand.X
 
 class GTSAMBundleAdjustment:
-    def __init__(self, image_registration_object: ir.ImageRegistration):
+    def __init__(self, image_registration_object: ir.ImageRegistration, minimum_matches_for_retriangulation = 75):
         self.img_reg_obj = image_registration_object
 
         # Camera intrinsics.
@@ -26,6 +26,8 @@ class GTSAMBundleAdjustment:
 
         # To hold the average 3d point for landmarks.
         self.all_landmarks_averages = []
+
+        self.minimum_matches_for_retriangulation = minimum_matches_for_retriangulation
 
     def define_factor_noises(self):
         # Define the camera observation noise model
@@ -87,54 +89,54 @@ class GTSAMBundleAdjustment:
                     averages_landmarks_found_before.append(self.all_landmarks_averages[landmark_index_src])
 
             # print("Common landmarks in ith", len(averages_landmarks_found_before))
-            # # TODO (KSorte): Find the number of matched features needed for stable triangulation. Assigning 5 right now.
-            # if (len(averages_landmarks_found_before) > 0):
-            #     # Convert to numpy arrays.
-            #     keypoints_assigned_before_src = np.array(keypoints_assigned_before_src)
-            #     keypoints_assigned_before_dst = np.array(keypoints_assigned_before_dst)
-            #     # N x 3
-            #     averages_landmarks_found_before = np.array(averages_landmarks_found_before)
+            # TODO (KSorte): Find the number of matched features needed for stable triangulation. Assigning 5 right now.
+            if (len(averages_landmarks_found_before) > self.minimum_matches_for_retriangulation):
+                # Convert to numpy arrays.
+                keypoints_assigned_before_src = np.array(keypoints_assigned_before_src)
+                keypoints_assigned_before_dst = np.array(keypoints_assigned_before_dst)
+                # N x 3
+                averages_landmarks_found_before = np.array(averages_landmarks_found_before)
 
-            #     retriangulated_landmarks = \
-            #         ir.ImageRegistration.triangulate_landmarks(previous_cam_extrinsic_pose,
-            #                                                    current_cam_extrinsic_pose,
-            #                                                    keypoints_assigned_before_src,
-            #                                                    keypoints_assigned_before_dst,
-            #                                                    self.img_reg_obj.camera_intrinsics)
+                retriangulated_landmarks = \
+                    ir.ImageRegistration.triangulate_landmarks(previous_cam_extrinsic_pose,
+                                                               current_cam_extrinsic_pose,
+                                                               keypoints_assigned_before_src,
+                                                               keypoints_assigned_before_dst,
+                                                               self.img_reg_obj.camera_intrinsics)
 
-            #     retriangulated_landmarks = (retriangulated_landmarks[0:3, :]).T
+                retriangulated_landmarks = (retriangulated_landmarks[0:3, :]).T
 
-            #     # # Compute the scale difference.
-            #     scale = 0
-            #     for p in range(retriangulated_landmarks.shape[0]):
-            #         scale += \
-            #         cv2.norm(averages_landmarks_found_before[p, :])/cv2.norm(retriangulated_landmarks[p, :])
+                # # Compute the scale difference.
+                scale = 0
+                for p in range(retriangulated_landmarks.shape[0]):
+                    scale += \
+                    cv2.norm(averages_landmarks_found_before[p, :])/cv2.norm(retriangulated_landmarks[p, :])
 
-            #     scale /= retriangulated_landmarks.shape[0]
-            #     print("Scale = ", scale)
+                scale /= retriangulated_landmarks.shape[0]
+                print("Scale = ", scale)
 
-            #     # Get R, T from relative pose b/w i and i+1th view.
-            #     rotation, translation = self.img_reg_obj.relative_poses[i]
+                # Get R, T from relative pose b/w i and i+1th view.
+                rotation, translation = self.img_reg_obj.relative_poses[i]
 
-            #     # Adjust the translation scale.
-            #     translation *= scale
+                # Adjust the translation scale.
+                translation *= scale
 
-            #     # Get refined SE3 relative pose
-            #     refined_relative_pose = np.eye(4)
-            #     refined_relative_pose[:3, :3] = rotation
-            #     refined_relative_pose[:3, 3] = translation.flatten()
+                # Get refined SE3 relative pose
+                refined_relative_pose = np.eye(4)
+                refined_relative_pose[:3, :3] = rotation
+                refined_relative_pose[:3, 3] = translation.flatten()
 
-            #     # Use refined translation to get new camera extrinsics.
-            #     current_cam_extrinsic_pose = refined_relative_pose@previous_cam_extrinsic_pose
+                # Use refined translation to get new camera extrinsics.
+                current_cam_extrinsic_pose = refined_relative_pose@previous_cam_extrinsic_pose
 
-            #     # Update ImageRegistration object
-            #     self.img_reg_obj.camera_extrinsic_poses[i+1] = current_cam_extrinsic_pose
+                # Update ImageRegistration object
+                self.img_reg_obj.camera_extrinsic_poses[i+1] = current_cam_extrinsic_pose
 
-            #     # Use scale adjusted dst (i+1) view to retriangulate all points.
-            #     self.img_reg_obj.world_points_3D[i] = ir.ImageRegistration.triangulate_landmarks(previous_cam_extrinsic_pose,
-            #                                                                                      current_cam_extrinsic_pose,
-            #                                                                                      src_points, dst_points,
-            #                                                                                      self.img_reg_obj.camera_intrinsics)
+                # Use scale adjusted dst (i+1) view to retriangulate all points.
+                self.img_reg_obj.world_points_3D[i] = ir.ImageRegistration.triangulate_landmarks(previous_cam_extrinsic_pose,
+                                                                                                 current_cam_extrinsic_pose,
+                                                                                                 src_points, dst_points,
+                                                                                                 self.img_reg_obj.camera_intrinsics)
 
             #  Get i+1th camera pose.
             camera_pose = ir.ImageRegistration.get_transformation_matrix(current_cam_extrinsic_pose)

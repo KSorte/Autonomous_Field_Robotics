@@ -555,6 +555,9 @@ class ImageRegistration:
             ax.scatter(points_3d[0], points_3d[1], points_3d[2],
                     c='blue', marker='.', s=1)
 
+        ax.set_xlim([-50, 50])
+        ax.set_ylim([-50, 50])
+        ax.set_zlim([-50, 50])
         ax.set_xlabel('X')
         ax.set_ylabel('Y')
         ax.set_zlabel('Z')
