@@ -268,6 +268,16 @@ class GTSAMBundleAdjustment:
         params = gtsam.LevenbergMarquardtParams()
         optimizer = gtsam.LevenbergMarquardtOptimizer(self.graph, self.initial, params)
         self.result = optimizer.optimize()
+        print(self.graph)
+
+    def plot_marginals(self):
+        %matplotlib tk
+
+        marginals = gtsam.Marginals(self.graph, self.result)
+        gtsam_plot.plot_3d_points(1, self.result)
+        gtsam_plot.plot_trajectory(1, self.result, marginals=marginals, scale=8)
+        gtsam_plot.set_axes_equal(1)
+        plt.show()
 
     def extract_landmarks_to_array(self):
         """
